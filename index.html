@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Realtime Canvas</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Left Toolbar ── */
+    #toolbar {
+      position: fixed;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      z-index: 20;
+      background: rgba(22, 22, 38, 0.92);
+      backdrop-filter: blur(16px);
+      padding: 8px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+    }
+
+    .toolbar-divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+      margin: 4px 0;
+    }
+
+    .tool-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: transparent;
+      color: #888;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      position: relative;
+    }
+
+    .tool-btn:hover { background: rgba(255, 255, 255, 0.08); color: #ccc; }
+    .tool-btn.active { background: rgba(99, 102, 241, 0.25); color: #a5b4fc; }
+    .tool-btn svg { width: 20px; height: 20px; }
+
+    .tool-btn .tooltip {
+      position: absolute;
+      left: 52px;
+      background: rgba(22, 22, 38, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s;
+      color: #ccc;
+    }
+
+    .tool-btn:hover .tooltip { opacity: 1; }
+
+    /* ── Main Layout ── */
+    #main {
+      flex: 1;
+      display: flex;
+      padding: 12px 12px 12px 68px;
+      gap: 12px;
+      height: 100vh;
+    }
+
+    #canvas-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    #canvas-wrapper {
+      flex: 1;
+      background: #1a1a2e;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+      position: relative;
+    }
+
+    #canvas-wrapper canvas {
+      display: block;
+      border-radius: 16px;
+    }
+
+    /* ── Manipulation Overlay ── */
+    #handle-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    #bbox {
+      position: absolute;
+      border: 1.5px solid rgba(99, 102, 241, 0.7);
+      pointer-events: auto;
+      cursor: move;
+      display: none;
+    }
+
+    .corner-handle {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      background: #6366f1;
+      border: 2px solid #a5b4fc;
+      border-radius: 3px;
+      pointer-events: auto;
+      z-index: 2;
+    }
+
+    .corner-handle.tl { top: -6px; left: -6px; cursor: nwse-resize; }
+    .corner-handle.tr { top: -6px; right: -6px; cursor: nesw-resize; }
+    .corner-handle.bl { bottom: -6px; left: -6px; cursor: nesw-resize; }
+    .corner-handle.br { bottom: -6px; right: -6px; cursor: nwse-resize; }
+
+    #rotate-handle {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 28px;
+      height: 28px;
+      background: rgba(99, 102, 241, 0.9);
+      border: 2px solid #a5b4fc;
+      border-radius: 50%;
+      pointer-events: auto;
+      cursor: grab;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #rotate-handle:active { cursor: grabbing; }
+
+    #rotate-handle svg {
+      width: 16px;
+      height: 16px;
+      pointer-events: none;
+    }
+
+    /* ── Drop Overlay ── */
+    #drop-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(99, 102, 241, 0.12);
+      border: 2px dashed rgba(99, 102, 241, 0.5);
+      border-radius: 16px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      pointer-events: none;
+      font-size: 15px;
+      color: #a5b4fc;
+      gap: 8px;
+    }
+
+    #drop-overlay.active { display: flex; }
+    #drop-overlay svg { width: 24px; height: 24px; }
+
+    /* ── Selection Info ── */
+    #selection-info {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(22, 22, 38, 0.9);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 12px;
+      color: #a5b4fc;
+      z-index: 5;
+      display: none;
+      white-space: nowrap;
+    }
+
+    /* ── Loading Indicator ── */
+    #loading-indicator {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #a5b4fc;
+      font-size: 14px;
+      display: none;
+      z-index: 15;
+      background: rgba(22, 22, 38, 0.85);
+      padding: 10px 20px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* ── Empty State ── */
+    #empty-state {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      color: #555;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    #empty-state svg { width: 48px; height: 48px; opacity: 0.4; }
+    #empty-state p { font-size: 14px; }
+    #empty-state .hint { font-size: 12px; opacity: 0.6; }
+
+    /* ── AI Output Panel ── */
+    #output-panel {
+      flex: 1;
+      min-width: 0;
+      background: rgba(22, 22, 38, 0.6);
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #444;
+      gap: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #output-panel .placeholder-icon { width: 48px; height: 48px; opacity: 0.3; }
+    #output-panel .placeholder-text { font-size: 13px; opacity: 0.5; }
+
+    #output-image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+      border-radius: 16px;
+    }
+
+    #output-loading {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(15, 15, 26, 0.8);
+      z-index: 2;
+      border-radius: 16px;
+    }
+
+    #output-loading.active { display: flex; }
+
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid rgba(99, 102, 241, 0.2);
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #output-loading span { font-size: 13px; color: #888; }
+
+    #output-error {
+      font-size: 12px;
+      color: #f87171;
+      text-align: center;
+      padding: 0 16px;
+      display: none;
+    }
+
+    /* ── Bottom Bar ── */
+    #bottom-bar {
+      padding: 10px 12px 12px 68px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    #prompt-input {
+      flex: 1;
+      background: rgba(22, 22, 38, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 12px 16px;
+      color: #e0e0e0;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #prompt-input:focus { border-color: rgba(99, 102, 241, 0.4); }
+    #prompt-input::placeholder { color: #555; }
+
+    .param-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(22, 22, 38, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 6px 12px;
+    }
+
+    .param-group label {
+      font-size: 11px;
+      color: #888;
+      white-space: nowrap;
+    }
+
+    .param-group input[type="range"] {
+      width: 80px;
+      accent-color: #6366f1;
+    }
+
+    .param-group .param-value {
+      font-size: 11px;
+      color: #a5b4fc;
+      min-width: 24px;
+      text-align: right;
+    }
+
+    .param-group input[type="number"] {
+      width: 52px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      padding: 3px 6px;
+      color: #ccc;
+      font-size: 11px;
+      font-family: inherit;
+      outline: none;
+      -moz-appearance: textfield;
+    }
+
+    .param-group input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
+
+    #btn-generate {
+      padding: 10px 24px;
+      background: #6366f1;
+      border: none;
+      border-radius: 12px;
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+
+    #btn-generate:hover { background: #5558e6; }
+    #btn-generate:disabled { background: #3a3a5c; color: #666; cursor: not-allowed; }
+
+    #btn-generate { position: relative; }
+
+    .change-dot {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      width: 10px;
+      height: 10px;
+      background: #f472b6;
+      border-radius: 50%;
+      border: 2px solid #0f0f1a;
+      display: none;
+    }
+
+    .change-dot.visible { display: block; }
+
+    #no-changes-toast {
+      position: fixed;
+      bottom: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(22, 22, 38, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 6px 16px;
+      font-size: 12px;
+      color: #888;
+      z-index: 30;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+
+    #no-changes-toast.visible { opacity: 1; }
+
+    kbd {
+      font-size: 10px;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.08);
+      font-family: inherit;
+      color: #666;
+      margin-left: 2px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Left Toolbar -->
+  <div id="toolbar">
+    <!-- Upload 3D File -->
+    <button class="tool-btn" id="btn-upload">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <span class="tooltip">Import 3D <kbd>U</kbd></span>
+    </button>
+
+    <div class="toolbar-divider"></div>
+
+    <!-- Delete -->
+    <button class="tool-btn" id="btn-delete">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+        <path d="M10 11v6"/><path d="M14 11v6"/>
+        <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+      </svg>
+      <span class="tooltip">Delete <kbd>Del</kbd></span>
+    </button>
+
+    <!-- Focus Camera -->
+    <button class="tool-btn" id="btn-focus">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 2v4"/><path d="M12 18v4"/>
+        <path d="M2 12h4"/><path d="M18 12h4"/>
+      </svg>
+      <span class="tooltip">Focus <kbd>F</kbd></span>
+    </button>
+  </div>
+
+  <!-- Hidden file input -->
+  <input type="file" id="file-input" accept=".glb,.gltf,.obj,.fbx,.stl" multiple style="display:none">
+
+  <!-- Main Content -->
+  <div id="main">
+    <div id="canvas-panel">
+      <div id="canvas-wrapper">
+        <!-- Manipulation handles overlay -->
+        <div id="handle-overlay">
+          <div id="bbox">
+            <div class="corner-handle tl" data-corner="tl"></div>
+            <div class="corner-handle tr" data-corner="tr"></div>
+            <div class="corner-handle bl" data-corner="bl"></div>
+            <div class="corner-handle br" data-corner="br"></div>
+            <div id="rotate-handle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.5 2v6h-6"/>
+                <path d="M21.34 13.72A9 9 0 1 1 20.57 7.5L21.5 8"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <div id="drop-overlay">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Drop 3D file here
+        </div>
+        <div id="selection-info"></div>
+        <div id="loading-indicator">Loading model...</div>
+        <div id="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"/>
+          </svg>
+          <p>Drop a 3D file or click Import</p>
+          <span class="hint">.glb .gltf .obj .fbx .stl</span>
+        </div>
+      </div>
+    </div>
+    <div id="output-panel">
+      <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+      <p class="placeholder-text">AI output will appear here</p>
+      <img id="output-image" alt="Generated image">
+      <div id="output-loading">
+        <div class="spinner"></div>
+        <span>Generating...</span>
+      </div>
+      <p id="output-error"></p>
+    </div>
+  </div>
+
+  <!-- Bottom Bar -->
+  <div id="bottom-bar">
+    <input id="prompt-input" type="text" placeholder="Describe what you want to generate...">
+    <div class="param-group">
+      <label>Strength</label>
+      <input type="range" id="param-strength" min="0" max="100" value="75" oninput="this.nextElementSibling.textContent=this.value/100">
+      <span class="param-value">0.75</span>
+    </div>
+    <div class="param-group">
+      <label>Steps</label>
+      <input type="number" id="param-steps" value="20" min="1" max="150">
+    </div>
+    <div class="param-group">
+      <label>Seed</label>
+      <input type="number" id="param-seed" value="42" min="-1" max="999999999">
+    </div>
+    <div class="param-group">
+      <label>Size</label>
+      <input type="number" id="param-width" value="512" min="64" max="2048" step="64" style="width:44px">
+      <span class="param-value" style="min-width:auto">x</span>
+      <input type="number" id="param-height" value="512" min="64" max="2048" step="64" style="width:44px">
+    </div>
+    <button id="btn-generate">Generate<span class="change-dot" id="change-dot"></span></button>
+  </div>
+  <div id="no-changes-toast">No changes to regenerate</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+    import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+    import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+    // ── State ──
+    const objects = [];
+    let selectedObject = null;
+
+    // Drag state
+    let dragAction = null; // 'move' | 'scale' | 'rotate' | null
+    let dragStart = null;
+    let dragObjectStart = null;
+
+    // Change detection
+    let sceneChanged = true; // true initially so first generate always works
+    let generateTimer = null;
+
+    function markChanged() {
+      sceneChanged = true;
+      document.getElementById('change-dot').classList.add('visible');
+    }
+
+    function clearChanged() {
+      sceneChanged = false;
+      document.getElementById('change-dot').classList.remove('visible');
+    }
+
+    // Debounce scaffold for future auto mode
+    function scheduleGenerate(delayMs = 500) {
+      if (generateTimer) clearTimeout(generateTimer);
+      generateTimer = setTimeout(() => { generate(); }, delayMs);
+    }
+
+    // ── Scene ──
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1e1e32);
+
+    const gridHelper = new THREE.GridHelper(20, 20, 0x333355, 0x222244);
+    scene.add(gridHelper);
+
+    // ── Lighting ──
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(5, 10, 7);
+    scene.add(dirLight);
+
+    scene.add(new THREE.HemisphereLight(0x6366f1, 0x1e1e32, 0.4));
+
+    const fillLight = new THREE.DirectionalLight(0xf472b6, 0.3);
+    fillLight.position.set(-3, 2, -5);
+    scene.add(fillLight);
+
+    // ── Camera (fixed) ──
+    const wrapper = document.getElementById('canvas-wrapper');
+    const camera = new THREE.PerspectiveCamera(
+      50, wrapper.clientWidth / wrapper.clientHeight, 0.01, 1000
+    );
+    camera.position.set(4, 3, 5);
+    camera.lookAt(0, 0, 0);
+
+    // ── Renderer ──
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    wrapper.appendChild(renderer.domElement);
+
+    // Scroll to zoom
+    renderer.domElement.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const dir = camera.getWorldDirection(new THREE.Vector3());
+      const delta = e.deltaY > 0 ? -0.05 : 0.05;
+      camera.position.addScaledVector(dir, delta * camera.position.length());
+    }, { passive: false });
+
+    // ── Loaders ──
+    const gltfLoader = new GLTFLoader();
+    const objLoader = new OBJLoader();
+    const fbxLoader = new FBXLoader();
+    const stlLoader = new STLLoader();
+
+    function getLoaderInfo(filename) {
+      const ext = filename.split('.').pop().toLowerCase();
+      switch (ext) {
+        case 'glb': case 'gltf': return { loader: gltfLoader, type: 'gltf' };
+        case 'obj': return { loader: objLoader, type: 'obj' };
+        case 'fbx': return { loader: fbxLoader, type: 'fbx' };
+        case 'stl': return { loader: stlLoader, type: 'stl' };
+        default: return null;
+      }
+    }
+
+    // ── File Loading ──
+    function loadFile(file) {
+      const info = getLoaderInfo(file.name);
+      if (!info) {
+        alert('Unsupported format: ' + file.name + '\nSupported: .glb .gltf .obj .fbx .stl');
+        return;
+      }
+
+      showLoading(true);
+      const url = URL.createObjectURL(file);
+
+      const onLoad = (result) => {
+        let object;
+        switch (info.type) {
+          case 'gltf': object = result.scene; break;
+          case 'obj': case 'fbx': object = result; break;
+          case 'stl':
+            object = new THREE.Mesh(result, new THREE.MeshStandardMaterial({
+              color: 0x6366f1, metalness: 0.3, roughness: 0.6,
+            }));
+            break;
+        }
+
+        // Ensure standard materials for highlighting
+        object.traverse((child) => {
+          if (child.isMesh) {
+            if (!child.material) {
+              child.material = new THREE.MeshStandardMaterial({ color: 0x888888 });
+            }
+            if (child.material.isMeshBasicMaterial) {
+              const color = child.material.color.clone();
+              child.material = new THREE.MeshStandardMaterial({
+                color, metalness: 0.1, roughness: 0.8,
+              });
+            }
+          }
+        });
+
+        const wrapper = wrapObject(object);
+        wrapper.userData.filename = file.name;
+
+        scene.add(wrapper);
+        objects.push(wrapper);
+        selectObject(wrapper);
+        updateEmptyState();
+        markChanged();
+
+        URL.revokeObjectURL(url);
+        showLoading(false);
+      };
+
+      const onError = (err) => {
+        console.error('Error loading model:', err);
+        alert('Failed to load ' + file.name);
+        URL.revokeObjectURL(url);
+        showLoading(false);
+      };
+
+      info.loader.load(url, onLoad, undefined, onError);
+    }
+
+    // Wrap model in a Group so the model's center is at the group origin.
+    // Rotations then pivot through the midpoint of the object.
+    function wrapObject(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = box.getSize(new THREE.Vector3());
+
+      // Scale to fit within 2 units
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 0) object.scale.multiplyScalar(2 / maxDim);
+
+      // Recompute after scaling
+      const box2 = new THREE.Box3().setFromObject(object);
+      const center = box2.getCenter(new THREE.Vector3());
+      const halfHeight = (box2.max.y - box2.min.y) / 2;
+
+      // Offset the model so its center sits at the group's origin
+      object.position.sub(center);
+
+      const group = new THREE.Group();
+      group.add(object);
+
+      // Position the group so the model sits on the grid (center is at halfHeight)
+      group.position.y = halfHeight;
+
+      // Offset X if there are already objects
+      if (objects.length > 0) {
+        group.position.x = objects.length * 3;
+      }
+
+      return group;
+    }
+
+    // ── Projection Helpers ──
+    function toScreen(point3D) {
+      const v = point3D.clone().project(camera);
+      const rect = renderer.domElement.getBoundingClientRect();
+      return {
+        x: (v.x + 1) / 2 * rect.width,
+        y: (-v.y + 1) / 2 * rect.height,
+      };
+    }
+
+    function getScreenBBox(obj) {
+      const box3 = new THREE.Box3().setFromObject(obj);
+      const corners = [
+        new THREE.Vector3(box3.min.x, box3.min.y, box3.min.z),
+        new THREE.Vector3(box3.max.x, box3.min.y, box3.min.z),
+        new THREE.Vector3(box3.min.x, box3.max.y, box3.min.z),
+        new THREE.Vector3(box3.max.x, box3.max.y, box3.min.z),
+        new THREE.Vector3(box3.min.x, box3.min.y, box3.max.z),
+        new THREE.Vector3(box3.max.x, box3.min.y, box3.max.z),
+        new THREE.Vector3(box3.min.x, box3.max.y, box3.max.z),
+        new THREE.Vector3(box3.max.x, box3.max.y, box3.max.z),
+      ];
+
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      corners.forEach(c => {
+        const s = toScreen(c);
+        minX = Math.min(minX, s.x);
+        minY = Math.min(minY, s.y);
+        maxX = Math.max(maxX, s.x);
+        maxY = Math.max(maxY, s.y);
+      });
+
+      const pad = 14;
+      return {
+        left: minX - pad,
+        top: minY - pad,
+        width: (maxX - minX) + pad * 2,
+        height: (maxY - minY) + pad * 2,
+      };
+    }
+
+    // ── Bounding Box Overlay ──
+    const bboxEl = document.getElementById('bbox');
+
+    function updateOverlay() {
+      if (!selectedObject) {
+        bboxEl.style.display = 'none';
+        return;
+      }
+
+      const sb = getScreenBBox(selectedObject);
+      bboxEl.style.display = 'block';
+      bboxEl.style.left = sb.left + 'px';
+      bboxEl.style.top = sb.top + 'px';
+      bboxEl.style.width = sb.width + 'px';
+      bboxEl.style.height = sb.height + 'px';
+    }
+
+    // ── Raycasting ──
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    function raycastObjects(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+
+      const meshes = [];
+      objects.forEach(obj => {
+        obj.traverse(child => { if (child.isMesh) meshes.push(child); });
+      });
+
+      const intersects = raycaster.intersectObjects(meshes, false);
+      if (intersects.length > 0) {
+        let target = intersects[0].object;
+        while (target.parent && !objects.includes(target)) target = target.parent;
+        if (objects.includes(target)) return target;
+      }
+      return null;
+    }
+
+    function getPlaneIntersection(event, planePoint) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+
+      // Plane facing the camera through the object center
+      const camDir = camera.getWorldDirection(new THREE.Vector3());
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camDir, planePoint);
+      const intersection = new THREE.Vector3();
+      raycaster.ray.intersectPlane(plane, intersection);
+      return intersection;
+    }
+
+    // ── Selection ──
+    function selectObject(obj) {
+      if (selectedObject === obj) return;
+      clearHighlight();
+      selectedObject = obj;
+      highlightObject(obj);
+      updateSelectionInfo();
+      updateOverlay();
+    }
+
+    function deselectObject() {
+      if (!selectedObject) return;
+      clearHighlight();
+      selectedObject = null;
+      updateSelectionInfo();
+      updateOverlay();
+    }
+
+    function highlightObject(obj) {
+      obj.traverse(child => {
+        if (child.isMesh && child.material && child.material.emissive) {
+          child.userData._origEmissive = child.material.emissive.getHex();
+          child.material.emissive.setHex(0x1a1a40);
+        }
+      });
+    }
+
+    function clearHighlight() {
+      objects.forEach(obj => {
+        obj.traverse(child => {
+          if (child.isMesh && child.userData._origEmissive !== undefined) {
+            child.material.emissive.setHex(child.userData._origEmissive);
+            delete child.userData._origEmissive;
+          }
+        });
+      });
+    }
+
+    // ── Drag Interactions ──
+
+    // Move: click inside bbox → drag on camera-facing plane
+    bboxEl.addEventListener('pointerdown', (e) => {
+      // Don't start move if clicking a handle
+      if (e.target.classList.contains('corner-handle') || e.target.id === 'rotate-handle' || e.target.closest('#rotate-handle')) return;
+      if (!selectedObject) return;
+
+      e.stopPropagation();
+      dragAction = 'move';
+      dragStart = { x: e.clientX, y: e.clientY };
+      const objCenter = new THREE.Box3().setFromObject(selectedObject).getCenter(new THREE.Vector3());
+      const planeHit = getPlaneIntersection(e, objCenter);
+      dragObjectStart = {
+        position: selectedObject.position.clone(),
+        planeHit: planeHit,
+        objCenter: objCenter,
+      };
+      bboxEl.style.cursor = 'grabbing';
+    });
+
+    // Scale: click corner → drag to scale uniformly
+    document.querySelectorAll('.corner-handle').forEach(handle => {
+      handle.addEventListener('pointerdown', (e) => {
+        if (!selectedObject) return;
+        e.stopPropagation();
+        dragAction = 'scale';
+
+        const sb = getScreenBBox(selectedObject);
+        const centerX = sb.left + sb.width / 2;
+        const centerY = sb.top + sb.height / 2;
+        const dx = e.clientX - centerX;
+        const dy = e.clientY - centerY;
+
+        dragStart = { x: e.clientX, y: e.clientY };
+        dragObjectStart = {
+          scale: selectedObject.scale.clone(),
+          initDist: Math.sqrt(dx * dx + dy * dy),
+          centerX, centerY,
+        };
+      });
+    });
+
+    // Rotate: click center button → drag to rotate
+    document.getElementById('rotate-handle').addEventListener('pointerdown', (e) => {
+      if (!selectedObject) return;
+      e.stopPropagation();
+      dragAction = 'rotate';
+      dragStart = { x: e.clientX, y: e.clientY };
+      dragObjectStart = {
+        rotation: selectedObject.rotation.clone(),
+      };
+      e.currentTarget.style.cursor = 'grabbing';
+    });
+
+    // Global move / up handlers
+    window.addEventListener('pointermove', (e) => {
+      if (!dragAction || !selectedObject) return;
+
+      if (dragAction === 'move') {
+        const objCenter = dragObjectStart.objCenter;
+        const currentHit = getPlaneIntersection(e, objCenter);
+        if (currentHit && dragObjectStart.planeHit) {
+          const delta = currentHit.clone().sub(dragObjectStart.planeHit);
+          selectedObject.position.copy(dragObjectStart.position).add(delta);
+        }
+      }
+
+      else if (dragAction === 'scale') {
+        const dx = e.clientX - dragObjectStart.centerX;
+        const dy = e.clientY - dragObjectStart.centerY;
+        const currentDist = Math.sqrt(dx * dx + dy * dy);
+        const ratio = currentDist / Math.max(dragObjectStart.initDist, 1);
+        selectedObject.scale.copy(dragObjectStart.scale).multiplyScalar(ratio);
+      }
+
+      else if (dragAction === 'rotate') {
+        const dx = e.clientX - dragStart.x;
+        const dy = e.clientY - dragStart.y;
+        const sensitivity = 0.01;
+        selectedObject.rotation.set(
+          dragObjectStart.rotation.x + dy * sensitivity,
+          dragObjectStart.rotation.y + dx * sensitivity,
+          dragObjectStart.rotation.z
+        );
+      }
+
+      updateOverlay();
+    });
+
+    window.addEventListener('pointerup', () => {
+      if (dragAction) markChanged();
+      if (dragAction === 'move') bboxEl.style.cursor = 'move';
+      if (dragAction === 'rotate') document.getElementById('rotate-handle').style.cursor = 'grab';
+      dragAction = null;
+      dragStart = null;
+      dragObjectStart = null;
+    });
+
+    // Click on canvas (not on overlay) → select / deselect via raycast
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      dragStart = { x: e.clientX, y: e.clientY };
+    });
+
+    renderer.domElement.addEventListener('pointerup', (e) => {
+      if (!dragStart) return;
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      if (Math.sqrt(dx * dx + dy * dy) < 5) {
+        const hit = raycastObjects(e);
+        if (hit) {
+          selectObject(hit);
+        } else {
+          deselectObject();
+        }
+      }
+      if (!dragAction) {
+        dragStart = null;
+        dragObjectStart = null;
+      }
+    });
+
+    // ── Delete ──
+    function deleteSelected() {
+      if (!selectedObject) return;
+      scene.remove(selectedObject);
+      selectedObject.traverse(child => {
+        if (child.isMesh) {
+          child.geometry?.dispose();
+          if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+          else child.material?.dispose();
+        }
+      });
+      const idx = objects.indexOf(selectedObject);
+      if (idx > -1) objects.splice(idx, 1);
+      selectedObject = null;
+      updateSelectionInfo();
+      updateOverlay();
+      updateEmptyState();
+      markChanged();
+    }
+
+    // ── Focus Camera ──
+    function focusCamera() {
+      const target = new THREE.Vector3(0, 0, 0);
+      if (selectedObject) {
+        new THREE.Box3().setFromObject(selectedObject).getCenter(target);
+      } else if (objects.length > 0) {
+        const box = new THREE.Box3();
+        objects.forEach(obj => box.expandByObject(obj));
+        box.getCenter(target);
+      }
+      camera.position.set(target.x + 4, target.y + 3, target.z + 5);
+      camera.lookAt(target);
+    }
+
+    // ── Wire Up Toolbar ──
+    document.getElementById('btn-upload').addEventListener('click', () => fileInput.click());
+    document.getElementById('btn-delete').addEventListener('click', deleteSelected);
+    document.getElementById('btn-focus').addEventListener('click', focusCamera);
+
+    const fileInput = document.getElementById('file-input');
+    fileInput.addEventListener('change', () => {
+      Array.from(fileInput.files).forEach(file => loadFile(file));
+      fileInput.value = '';
+    });
+
+    // ── Drag-and-Drop ──
+    const dropOverlay = document.getElementById('drop-overlay');
+
+    wrapper.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dropOverlay.classList.add('active');
+    });
+
+    wrapper.addEventListener('dragover', (e) => e.preventDefault());
+
+    wrapper.addEventListener('dragleave', (e) => {
+      if (!wrapper.contains(e.relatedTarget)) dropOverlay.classList.remove('active');
+    });
+
+    wrapper.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropOverlay.classList.remove('active');
+      Array.from(e.dataTransfer.files).forEach(file => loadFile(file));
+    });
+
+    // ── Keyboard Shortcuts ──
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      switch (e.key.toLowerCase()) {
+        case 'u': fileInput.click(); break;
+        case 'f': focusCamera(); break;
+        case 'delete':
+        case 'backspace':
+          e.preventDefault();
+          deleteSelected();
+          break;
+        case 'escape':
+          deselectObject();
+          break;
+      }
+    });
+
+    // ── UI Helpers ──
+    function updateSelectionInfo() {
+      const el = document.getElementById('selection-info');
+      if (selectedObject) {
+        el.textContent = 'Selected: ' + (selectedObject.userData.filename || 'Object');
+        el.style.display = 'block';
+      } else {
+        el.style.display = 'none';
+      }
+    }
+
+    function showLoading(show) {
+      document.getElementById('loading-indicator').style.display = show ? 'block' : 'none';
+    }
+
+    function updateEmptyState() {
+      document.getElementById('empty-state').style.display = objects.length === 0 ? 'flex' : 'none';
+    }
+
+    // ── Generate ──
+    const outputImage = document.getElementById('output-image');
+    const outputLoading = document.getElementById('output-loading');
+    const outputError = document.getElementById('output-error');
+    const placeholderIcon = document.querySelector('#output-panel .placeholder-icon');
+    const placeholderText = document.querySelector('#output-panel .placeholder-text');
+    const btnGenerate = document.getElementById('btn-generate');
+
+    async function generate() {
+      // Skip if nothing changed
+      if (!sceneChanged) {
+        const toast = document.getElementById('no-changes-toast');
+        toast.classList.add('visible');
+        setTimeout(() => toast.classList.remove('visible'), 1500);
+        return;
+      }
+
+      // Capture the current viewport
+      renderer.render(scene, camera);
+      const dataUrl = renderer.domElement.toDataURL('image/png');
+      const imageBase64 = dataUrl.split(',')[1];
+
+      const prompt = document.getElementById('prompt-input').value;
+      const strength = parseInt(document.getElementById('param-strength').value) / 100;
+      const steps = parseInt(document.getElementById('param-steps').value);
+      const seed = parseInt(document.getElementById('param-seed').value);
+      const width = parseInt(document.getElementById('param-width').value);
+      const height = parseInt(document.getElementById('param-height').value);
+
+      // Show loading state
+      outputLoading.classList.add('active');
+      outputError.style.display = 'none';
+      btnGenerate.disabled = true;
+
+      try {
+        const res = await fetch('http://localhost:8000/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_b64: imageBase64,
+            prompt,
+            strength,
+            steps,
+            seed,
+            width,
+            height,
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        // Display the returned image
+        if (data.image_b64) {
+          const mime = data.mime_type || 'image/png';
+          outputImage.src = 'data:' + mime + ';base64,' + data.image_b64;
+          outputImage.style.display = 'block';
+          placeholderIcon.style.display = 'none';
+          placeholderText.style.display = 'none';
+          clearChanged();
+        }
+      } catch (err) {
+        console.error('Generate error:', err);
+        outputError.textContent = 'Error: ' + err.message;
+        outputError.style.display = 'block';
+      } finally {
+        outputLoading.classList.remove('active');
+        btnGenerate.disabled = false;
+      }
+    }
+
+    btnGenerate.addEventListener('click', generate);
+
+    // Prompt and param changes count as a change
+    document.getElementById('prompt-input').addEventListener('input', markChanged);
+    document.getElementById('param-strength').addEventListener('input', markChanged);
+    document.getElementById('param-steps').addEventListener('input', markChanged);
+    document.getElementById('param-seed').addEventListener('input', markChanged);
+    document.getElementById('param-width').addEventListener('input', markChanged);
+    document.getElementById('param-height').addEventListener('input', markChanged);
+
+    // Enter key in prompt also triggers generate
+    document.getElementById('prompt-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') generate();
+    });
+
+    // ── Resize ──
+    window.addEventListener('resize', () => {
+      const w = wrapper.clientWidth;
+      const h = wrapper.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    });
+
+    // ── Render Loop ──
+    function animate() {
+      requestAnimationFrame(animate);
+      updateOverlay();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
