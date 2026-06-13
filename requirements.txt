@@ -21,5 +21,6 @@ jinja2>=3.1.0          # required by transformers apply_chat_template (Qwen3)
 # --- Image + server ---
 pillow>=10.3
 huggingface_hub[cli]    # `huggingface-cli login` — FLUX.2-klein-9B weights are gated
+httpx                   # remote providers (FAL / Fireworks)
 fastapi
 uvicorn[standard]

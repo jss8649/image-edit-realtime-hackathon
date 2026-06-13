@@ -1,20 +1,23 @@
 # Realtime 3D Canvas → AI Image Editing
 
 A browser-based 3D canvas where you import, position, rotate, and scale 3D objects,
-then watch an AI re-render the viewport **in ~realtime** as you edit. Generation runs
-on a **self-hosted FLUX.2 Klein 9B** model (distilled, 4-step) loaded in-process on a
-local H100 — no remote API, no submit-then-poll latency floor.
+then watch an AI re-render the viewport **in ~realtime** as you edit. By default,
+generation runs on a **self-hosted FLUX.2 Klein 9B** model (distilled, 4-step) loaded
+in-process on a local H100 — no remote API, no submit-then-poll latency floor. It can
+also be **hosted remotely** via FAL or Fireworks (see *Model hosting* below).
 
 Every time you move the scene, the frontend captures the WebGL viewport and sends it to
-the backend as a *reference image*; FLUX.2 Klein edits it according to your prompt and
+the backend as a *reference image*; the model edits it according to your prompt and
 the result appears side-by-side.
 
 ## Requirements
 
-- **GPU:** 1× NVIDIA H100 80GB (or any ~40GB+ CUDA GPU). Runs bf16, no quantization —
-  the ~9B flow model plus the Qwen3 text encoder are ~34GB resident in VRAM.
-- **Python:** 3.10+ with a CUDA build of PyTorch.
-- A Hugging Face account that has accepted the FLUX.2 license (weights are gated).
+- **GPU:** 1× NVIDIA H100 80GB (or any ~40GB+ CUDA GPU) for the default local model.
+  Runs bf16, no quantization — the ~9B flow model plus the Qwen3 text encoder are ~34GB
+  resident in VRAM. *Not needed if you use a remote provider (FAL/Fireworks).*
+- **Python:** 3.10+ (with a CUDA build of PyTorch for the local model).
+- For the local model: a Hugging Face account that has accepted the FLUX.2 license
+  (weights are gated). For remote: a FAL or Fireworks API key.
 
 ## Quick Start
 
@@ -82,20 +85,52 @@ auto-triggers ~300ms after you stop. The **Generate** button still works for man
   with *"same composition and camera angle as the reference image, photorealistic, "* to
   lock structure. The seed is fixed by default for frame-to-frame coherence.
 
+## Model hosting: local or remote
+
+Select the backend with `IMAGE_GEN_PROVIDER`:
+
+| Provider | Model | Notes |
+|---|---|---|
+| `klein` *(default)* | local FLUX.2 Klein 9B (in-process) | needs a GPU; lowest latency (~0.6s) |
+| `fal` | `fal-ai/flux-2/klein/9b/edit` (same model, hosted) | needs `FAL_KEY`; no GPU required |
+| `fireworks` | FLUX.1 Kontext (`flux-kontext-pro`) | needs `FIREWORKS_API_KEY`; submit-then-poll |
+| `echo` | — | mirror the capture back (UI smoke test) |
+
+```bash
+# Local (default) — nothing to set
+python server.py
+
+# Hosted on FAL (no GPU needed)
+IMAGE_GEN_PROVIDER=fal FAL_KEY=... python server.py
+
+# Hosted on Fireworks
+IMAGE_GEN_PROVIDER=fireworks FIREWORKS_API_KEY=fw_... python server.py
+```
+
+With a remote provider the server makes no GPU calls and loads no local weights, so it
+runs fine on a CPU-only box. The frontend is identical either way. Note FAL/Fireworks
+edit models ignore guidance/strength (prompt-driven editing), matching the UI.
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `KLEIN_MODEL_ID` | `black-forest-labs/FLUX.2-klein-9B` | HF repo id to load. |
+| `IMAGE_GEN_PROVIDER` | `klein` | Backend: `klein` (local) · `fal` · `fireworks` · `echo`. |
+| `KLEIN_MODEL_ID` | `black-forest-labs/FLUX.2-klein-9B` | Local HF repo id to load. |
 | `KLEIN_ECHO` | unset | `1` forces echo mode (mirror input back, no GPU). Auto-enabled if CUDA is unavailable. |
 | `KLEIN_CPU_OFFLOAD` | unset | `1` enables model CPU offload (fallback if VRAM is tight; higher latency). |
 | `KLEIN_NO_WARMUP` | unset | `1` skips the startup warmup inference. |
+| `FAL_KEY` | unset | FAL API key (required for `fal`). |
+| `FAL_MODEL` | `fal-ai/flux-2/klein/9b/edit` | FAL model id. |
+| `FIREWORKS_API_KEY` | unset | Fireworks API key `fw_...` (required for `fireworks`). |
+| `FIREWORKS_MODEL` | `flux-kontext-pro` | Fireworks model (`flux-kontext-pro` / `-max`). |
 | `PORT` | `3000` | Server port. |
 
 ## API
 
-### `GET /`
-Health check → `{"status":"ok","mode":"klein|echo","model":"...","busy":false}`
+### `GET /` and `GET /healthz`
+`GET /` serves the web UI. `GET /healthz` is the health check →
+`{"status":"ok","mode":"klein|fal|fireworks|echo","model":"...","busy":false}`
 
 ### `POST /generate`
 

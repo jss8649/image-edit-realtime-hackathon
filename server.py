@@ -1,26 +1,32 @@
 """
-Realtime image-editing proxy backed by an IN-PROCESS FLUX.2 Klein 9B model.
+Realtime image-editing proxy for the 3D canvas frontend.
 
-The 3D frontend captures its WebGL viewport and POSTs it to /generate. We decode
-it to a PIL image, run a single-reference FLUX.2 Klein edit (distilled, 4 steps)
-on the local H100, and return the result as base64. The model is loaded once at
-startup and kept warm in VRAM — no remote API, no submit-then-poll, no ~3s floor.
+The frontend captures its WebGL viewport and POSTs it to /generate. By default we
+run a single-reference FLUX.2 Klein edit (distilled, 4 steps) IN-PROCESS on the
+local H100 — loaded once and kept warm in VRAM, no remote API, no ~3s floor.
 
-GPU access is serialized with a single asyncio.Lock (one H100 = one inference at a
-time) and the blocking inference runs in a worker thread so the event loop stays
-responsive for cancellations.
+The model can instead be hosted REMOTELY via a provider (set IMAGE_GEN_PROVIDER):
+    klein      - local in-process FLUX.2 Klein 9B (default; needs a GPU)
+    fal        - fal-ai/flux-2/klein/9b/edit (same model, hosted)   [needs FAL_KEY]
+    fireworks  - FLUX.1 Kontext via Fireworks   [needs FIREWORKS_API_KEY]
+    echo       - mirror the capture back (no GPU, UI smoke test)
+Remote providers run on the event loop (no GPU lock); the local model serializes
+GPU access with one asyncio.Lock and runs inference in a worker thread.
 
 Env vars:
-    KLEIN_MODEL_ID    - HF repo id (default black-forest-labs/FLUX.2-klein-9B)
-    KLEIN_ECHO        - "1" to force echo mode (mirror input back, no GPU)
-    KLEIN_CPU_OFFLOAD - "1" to use model CPU offload (fallback if VRAM is tight)
-    KLEIN_NO_WARMUP   - "1" to skip the startup warmup inference
-    PORT              - server port (default 3000)
+    IMAGE_GEN_PROVIDER - klein (default) | fal | fireworks | echo
+    KLEIN_MODEL_ID     - local HF repo id (default black-forest-labs/FLUX.2-klein-9B)
+    KLEIN_ECHO         - "1" to force echo mode
+    KLEIN_CPU_OFFLOAD  - "1" to use model CPU offload (fallback if VRAM is tight)
+    KLEIN_NO_WARMUP    - "1" to skip the startup warmup inference
+    FAL_KEY / FAL_MODEL                 - FAL provider config
+    FIREWORKS_API_KEY / FIREWORKS_MODEL - Fireworks provider config
+    PORT               - server port (default 3000)
 
 Usage:
     pip install -r requirements.txt
-    huggingface-cli login          # weights are gated — accept the license first
-    python server.py
+    huggingface-cli login          # local weights are gated — accept the license
+    python server.py               # or: IMAGE_GEN_PROVIDER=fal FAL_KEY=... python server.py
 """
 
 import base64
@@ -39,15 +45,26 @@ from PIL import Image
 from pydantic import BaseModel
 
 import pipeline
+import providers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("server")
 
 PORT = int(os.environ.get("PORT", "3000"))
-ECHO_MODE = (
-    os.environ.get("KLEIN_ECHO", "").lower() in ("1", "true", "yes")
-    or not pipeline.is_available()
-)
+
+# Resolve the active backend.
+PROVIDER = os.environ.get("IMAGE_GEN_PROVIDER", "klein").lower()
+_FORCE_ECHO = os.environ.get("KLEIN_ECHO", "").lower() in ("1", "true", "yes")
+
+if _FORCE_ECHO or PROVIDER == "echo":
+    MODE = "echo"
+elif PROVIDER in ("fal", "fireworks"):
+    MODE = PROVIDER
+elif PROVIDER == "klein":
+    MODE = "klein" if pipeline.is_available() else "echo"  # echo fallback when no GPU
+else:
+    log.warning("Unknown IMAGE_GEN_PROVIDER=%r — falling back to echo", PROVIDER)
+    MODE = "echo"
 
 # One H100 → one inference at a time.
 import asyncio
@@ -94,17 +111,16 @@ def _encode_image(img: Image.Image) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if ECHO_MODE:
-        if not pipeline.is_available():
-            log.warning("CUDA not available — running in ECHO mode (input mirrored back).")
-        else:
-            log.warning("KLEIN_ECHO set — running in ECHO mode (input mirrored back).")
-    else:
+    if MODE == "klein":
         log.info("Loading FLUX.2 Klein into VRAM (this can take a while on first run)…")
         await to_thread.run_sync(pipeline.load)
         if os.environ.get("KLEIN_NO_WARMUP", "").lower() not in ("1", "true", "yes"):
             await to_thread.run_sync(pipeline.warmup)
         log.info("Ready — model warm in VRAM.")
+    elif MODE in ("fal", "fireworks"):
+        log.info("Using REMOTE provider '%s' — no local model loaded.", MODE)
+    else:
+        log.warning("Running in ECHO mode (input mirrored back, no generation).")
     yield
 
 
@@ -129,8 +145,12 @@ async def index():
 
 @app.get("/healthz")
 async def health():
-    return {"status": "ok", "mode": "echo" if ECHO_MODE else "klein",
-            "model": pipeline.MODEL_ID, "busy": gpu_lock.locked()}
+    model = {
+        "klein": pipeline.MODEL_ID,
+        "fal": providers.FAL_MODEL,
+        "fireworks": providers.FIREWORKS_MODEL,
+    }.get(MODE, "—")
+    return {"status": "ok", "mode": MODE, "model": model, "busy": gpu_lock.locked()}
 
 
 @app.post("/generate", response_model=GenerateResponse)
@@ -138,35 +158,38 @@ async def generate(req: GenerateRequest):
     img = _decode_image(req.image_b64)
 
     # Echo mode — no GPU, just mirror the capture back (UI smoke test).
-    if ECHO_MODE:
+    if MODE == "echo":
         return GenerateResponse(image_b64=_encode_image(img))
 
-    work = partial(
-        pipeline.generate,
-        img,
-        req.prompt,
-        steps=req.steps,
-        seed=req.seed,
-        guidance=req.guidance,
-        width=req.width,
-        height=req.height,
-    )
+    # Local in-process Klein — serialize GPU access, run off the event loop.
+    if MODE == "klein":
+        work = partial(
+            pipeline.generate, img, req.prompt,
+            steps=req.steps, seed=req.seed, guidance=req.guidance,
+            width=req.width, height=req.height,
+        )
+        async with gpu_lock:
+            try:
+                out = await to_thread.run_sync(work)
+            except Exception as exc:
+                log.exception("Generation failed")
+                raise HTTPException(500, f"Generation failed: {exc}")
+        return GenerateResponse(image_b64=_encode_image(out))
 
-    # Serialize GPU access; run the blocking inference off the event loop.
-    async with gpu_lock:
-        try:
-            out = await to_thread.run_sync(work)
-        except Exception as exc:
-            log.exception("Generation failed")
-            raise HTTPException(500, f"Generation failed: {exc}")
-
+    # Remote provider (fal / fireworks) — async HTTP, no GPU lock.
+    generate_fn = providers.GENERATORS[MODE]
+    try:
+        out = await generate_fn(
+            img, req.prompt, steps=req.steps, seed=req.seed,
+            width=req.width, height=req.height,
+        )
+    except Exception as exc:
+        log.exception("%s generation failed", MODE)
+        raise HTTPException(502, f"{MODE} generation failed: {exc}")
     return GenerateResponse(image_b64=_encode_image(out))
 
 
 if __name__ == "__main__":
     import uvicorn
-    if ECHO_MODE:
-        log.warning("Starting in ECHO mode on port %d", PORT)
-    else:
-        log.info("Starting Klein server on port %d (model=%s)", PORT, pipeline.MODEL_ID)
+    log.info("Starting server on port %d (provider=%s)", PORT, MODE)
     uvicorn.run(app, host="0.0.0.0", port=PORT)
