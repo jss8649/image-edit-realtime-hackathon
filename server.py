@@ -222,13 +222,26 @@ _stub_counter = {"n": 0}
 
 
 def _reconstruct_3d(image: Image.Image, out_path: str):
-    """Image -> textured GLB at out_path. STUB: simulate latency + return a sample asset.
-
-    Real impl (TRELLIS sidecar): POST `image` to the TRELLIS service and stream its
-    GLB bytes to out_path. Keep this function blocking — it runs in a worker thread.
+    """Image -> textured GLB at out_path. Calls the TRELLIS sidecar when TRELLIS_URL
+    is set; otherwise falls back to a STUB (sample asset) so the UI flow works before
+    the sidecar is up. Blocking — runs in a worker thread.
     """
+    trellis_url = os.environ.get("TRELLIS_URL", "").rstrip("/")
+    if trellis_url:
+        import base64 as _b64
+        import httpx as _httpx
+        buf = io.BytesIO()
+        image.convert("RGB").save(buf, format="PNG")
+        payload = {"image_b64": _b64.b64encode(buf.getvalue()).decode()}
+        r = _httpx.post(trellis_url + "/reconstruct", json=payload, timeout=600)
+        r.raise_for_status()
+        with open(out_path, "wb") as f:
+            f.write(r.content)
+        return
+
+    # STUB fallback — no sidecar configured yet.
     import time
-    time.sleep(3)  # simulate reconstruction latency
+    time.sleep(3)
     pick = _STUB_ASSETS[_stub_counter["n"] % len(_STUB_ASSETS)]
     _stub_counter["n"] += 1
     shutil.copyfile(_ASSETS_DIR / pick, out_path)
