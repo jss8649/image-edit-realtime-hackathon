@@ -881,13 +881,10 @@
       const group = new THREE.Group();
       group.add(object);
 
-      // Position the group so the model sits on the grid (center is at halfHeight)
+      // Sit the model on the grid (center at halfHeight) and spawn it at the origin so
+      // it's always in view — the camera looks at the origin. (Previously offset by
+      // objects.length*3, which marched new uploads off-screen once a scene was loaded.)
       group.position.y = halfHeight;
-
-      // Offset X if there are already objects
-      if (objects.length > 0) {
-        group.position.x = objects.length * 3;
-      }
 
       return group;
     }
