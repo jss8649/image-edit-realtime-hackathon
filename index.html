@@ -480,6 +480,15 @@
       </svg>
       <span class="tooltip">Load demo scene</span>
     </button>
+
+    <!-- Webcam toggle -->
+    <button class="tool-btn" id="btn-webcam">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 7l-7 5 7 5V7z"/>
+        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+      </svg>
+      <span class="tooltip">Webcam <kbd>W</kbd></span>
+    </button>
   </div>
 
   <!-- Hidden file input -->
@@ -489,6 +498,9 @@
   <div id="main">
     <div id="canvas-panel">
       <div id="canvas-wrapper">
+        <!-- Live webcam preview (shown only in webcam mode; mirrored like a selfie) -->
+        <video id="webcam-video" autoplay muted playsinline
+          style="display:none; position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); border-radius:16px; z-index:2;"></video>
         <!-- Manipulation handles overlay -->
         <div id="handle-overlay">
           <div id="bbox">
@@ -596,6 +608,18 @@
     const objects = [];
     let selectedObject = null;
 
+    // Input source: 3D scene (default) or live webcam.
+    let inputSource = 'scene';      // 'scene' | 'webcam'
+    let webcamStream = null;
+    let webcamLoopActive = false;
+    let webcamStarting = false;     // re-entrancy guard for enableWebcam
+    let webcamGen = 0;              // invalidates stale in-progress enables
+    const WEBCAM_RES = 512;         // lower res in webcam mode for ~realtime fps
+
+    // Per-button default prompts.
+    const DEMO_PROMPT = 'render this scene as a film photograph, maintaining the camera angle, cozy modern interior atop oriental rug on smooth stone floor display';
+    const WEBCAM_PROMPT = 'Make it claymation';
+
     // Drag state
     let dragAction = null; // 'move' | 'scale' | 'rotate' | null
     let dragStart = null;
@@ -613,7 +637,8 @@
     function markChanged() {
       sceneChanged = true;
       document.getElementById('change-dot').classList.add('visible');
-      if (AUTO_REGEN) scheduleGenerate(AUTO_REGEN_DELAY_MS);
+      // In webcam mode a continuous loop drives generation, so don't also debounce.
+      if (AUTO_REGEN && inputSource === 'scene') scheduleGenerate(AUTO_REGEN_DELAY_MS);
     }
 
     function clearChanged() {
@@ -762,6 +787,7 @@
     async function loadDemoScene() {
       while (objects.length) { selectedObject = objects[0]; deleteSelected(); }
       selectedObject = null;
+      document.getElementById('prompt-input').value = DEMO_PROMPT;
       showLoading(true);
       const base = API_BASE + '/assets/';
       // [file, {x, z}, yRotation(rad), scaleMultiplier]
@@ -1118,6 +1144,10 @@
     document.getElementById('btn-delete').addEventListener('click', deleteSelected);
     document.getElementById('btn-focus').addEventListener('click', focusCamera);
     document.getElementById('btn-demo').addEventListener('click', loadDemoScene);
+    document.getElementById('btn-webcam').addEventListener('click', toggleWebcam);
+    window.addEventListener('beforeunload', () => {
+      if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
+    });
 
     const fileInput = document.getElementById('file-input');
     fileInput.addEventListener('change', () => {
@@ -1150,6 +1180,7 @@
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       switch (e.key.toLowerCase()) {
         case 'u': fileInput.click(); break;
+        case 'w': toggleWebcam(); break;
         case 'f': focusCamera(); break;
         case 'delete':
         case 'backspace':
@@ -1178,7 +1209,8 @@
     }
 
     function updateEmptyState() {
-      document.getElementById('empty-state').style.display = objects.length === 0 ? 'flex' : 'none';
+      const show = inputSource === 'scene' && objects.length === 0;
+      document.getElementById('empty-state').style.display = show ? 'flex' : 'none';
     }
 
     // ── Generate ──
@@ -1193,59 +1225,71 @@
     const COMPOSITION_PREFIX = 'same composition and camera angle as the reference image, photorealistic, ';
     const CAPTURE_QUALITY = 0.92;
     let inFlightController = null;
+    const webcamVideo = document.getElementById('webcam-video');
 
-    // Render a clean reference frame for the model: hide the grid (noise the model
-    // misreads), then letterbox the capture into a width×height frame (preserves
-    // composition, no distortion) and JPEG-encode it to keep the upload small.
+    // Draw a reference frame — 3D viewport OR webcam — into a width×height JPEG.
     function captureReference(width, height) {
-      const gridWasVisible = gridHelper.visible;
-      gridHelper.visible = false;
-      renderer.render(scene, camera);
-      gridHelper.visible = gridWasVisible;
+      if (inputSource === 'webcam' && webcamVideo.readyState < 2) return null;  // frame not ready
 
-      const src = renderer.domElement;
       const off = document.createElement('canvas');
       off.width = width;
       off.height = height;
       const ctx = off.getContext('2d');
-      ctx.fillStyle = '#1e1e32';                 // scene background — seamless letterbox
-      ctx.fillRect(0, 0, width, height);
-      const scale = Math.min(width / src.width, height / src.height);
-      const dw = src.width * scale, dh = src.height * scale;
-      ctx.drawImage(src, (width - dw) / 2, (height - dh) / 2, dw, dh);
+
+      if (inputSource === 'webcam') {
+        // Cover-fit the webcam frame, mirrored to match the on-screen preview.
+        const vw = webcamVideo.videoWidth, vh = webcamVideo.videoHeight;
+        const scale = Math.max(width / vw, height / vh);
+        const dw = vw * scale, dh = vh * scale;
+        ctx.save();
+        ctx.translate(width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(webcamVideo, (width - dw) / 2, (height - dh) / 2, dw, dh);
+        ctx.restore();
+      } else {
+        // 3D scene: hide the grid (noise the model misreads), then letterbox.
+        const gridWasVisible = gridHelper.visible;
+        gridHelper.visible = false;
+        renderer.render(scene, camera);
+        gridHelper.visible = gridWasVisible;
+
+        const src = renderer.domElement;
+        ctx.fillStyle = '#1e1e32';               // scene background — seamless letterbox
+        ctx.fillRect(0, 0, width, height);
+        const scale = Math.min(width / src.width, height / src.height);
+        const dw = src.width * scale, dh = src.height * scale;
+        ctx.drawImage(src, (width - dw) / 2, (height - dh) / 2, dw, dh);
+      }
 
       return off.toDataURL('image/jpeg', CAPTURE_QUALITY).split(',')[1];
     }
 
-    async function generate() {
-      // Skip if nothing changed (manual button; auto-regen only fires on a change).
-      if (!sceneChanged) {
-        const toast = document.getElementById('no-changes-toast');
-        toast.classList.add('visible');
-        setTimeout(() => toast.classList.remove('visible'), 1500);
-        return;
+    // Core generation: capture the active source, send, display the result.
+    // No loading overlay — the previous frame stays until the new one swaps in (realtime feel).
+    // Returns true on success, false on skip/abort/error (lets the webcam loop back off).
+    async function runGeneration() {
+      const steps = parseInt(document.getElementById('param-steps').value);
+      const seed = parseInt(document.getElementById('param-seed').value);
+      let width = parseInt(document.getElementById('param-width').value);
+      let height = parseInt(document.getElementById('param-height').value);
+      let prompt;
+      if (inputSource === 'webcam') {
+        // Lower res for fps, and edit straight from the prompt — the 3D "same
+        // composition, photorealistic" prefix fights instruction edits like claymation.
+        width = height = WEBCAM_RES;
+        prompt = document.getElementById('prompt-input').value;
+      } else {
+        prompt = COMPOSITION_PREFIX + document.getElementById('prompt-input').value;
       }
 
-      // Only the latest frame matters — abort any in-flight request so the
-      // auto-loop never floods the backend.
+      const imageBase64 = captureReference(width, height);
+      if (!imageBase64) return false;            // webcam frame not ready — skip this tick
+
       if (inFlightController) inFlightController.abort();
       const controller = new AbortController();
       inFlightController = controller;
 
-      const promptRaw = document.getElementById('prompt-input').value;
-      const prompt = COMPOSITION_PREFIX + promptRaw;
-      const steps = parseInt(document.getElementById('param-steps').value);
-      const seed = parseInt(document.getElementById('param-seed').value);
-      const width = parseInt(document.getElementById('param-width').value);
-      const height = parseInt(document.getElementById('param-height').value);
-
-      const imageBase64 = captureReference(width, height);
-
-      // Consider this change handled now, so edits made *during* inference queue a
-      // fresh run (which will supersede this one).
-      clearChanged();
-
-      outputLoading.classList.add('active');
+      if (inputSource === 'scene') clearChanged();
       outputError.style.display = 'none';
 
       try {
@@ -1262,7 +1306,6 @@
         }
 
         const data = await res.json();
-
         if (data.image_b64) {
           const mime = data.mime_type || 'image/png';
           outputImage.src = 'data:' + mime + ';base64,' + data.image_b64;
@@ -1270,19 +1313,104 @@
           placeholderIcon.style.display = 'none';
           placeholderText.style.display = 'none';
         }
+        return true;
       } catch (err) {
-        if (err.name === 'AbortError') return;     // superseded by a newer frame
+        if (err.name === 'AbortError') return false;   // superseded by a newer frame
         console.error('Generate error:', err);
         outputError.textContent = 'Error: ' + err.message;
         outputError.style.display = 'block';
-        markChanged();                             // let the user retry
+        if (inputSource === 'scene') markChanged();    // let the user retry
+        return false;
       } finally {
-        // Only the latest request clears the spinner / handle.
-        if (inFlightController === controller) {
-          inFlightController = null;
-          outputLoading.classList.remove('active');
-        }
+        if (inFlightController === controller) inFlightController = null;
       }
+    }
+
+    // Manual / auto-regen entry point for 3D scene mode (gates on "did anything change?").
+    async function generate() {
+      if (inputSource === 'webcam') return;            // the live loop already drives generation
+      if (!sceneChanged) {
+        const toast = document.getElementById('no-changes-toast');
+        toast.classList.add('visible');
+        setTimeout(() => toast.classList.remove('visible'), 1500);
+        return;
+      }
+      return runGeneration();
+    }
+
+    // ── Webcam input source ──
+    async function runWebcamLoop() {
+      while (webcamLoopActive) {
+        const ok = await runGeneration();
+        if (!webcamLoopActive) break;
+        // Yield on success; back off if a request failed so a down backend isn't hammered.
+        await new Promise(r => ok ? requestAnimationFrame(r) : setTimeout(r, 1500));
+      }
+    }
+
+    async function enableWebcam() {
+      if (inputSource === 'webcam' || webcamStarting) return;   // ignore double-trigger
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('This browser has no camera API.');
+        return;
+      }
+      webcamStarting = true;
+      const myGen = ++webcamGen;                                // a later toggle invalidates this start
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false,
+        });
+      } catch (err) {
+        console.error('Webcam error:', err);
+        alert(window.isSecureContext
+          ? 'Could not access the camera: ' + err.message
+          : 'The camera needs a secure page (HTTPS or localhost). Open the https tunnel URL, then try again.');
+        if (myGen === webcamGen) webcamStarting = false;
+        return;
+      }
+      if (myGen !== webcamGen) { stream.getTracks().forEach(t => t.stop()); return; }  // cancelled mid-await
+
+      webcamStream = stream;
+      webcamVideo.srcObject = stream;
+      await webcamVideo.play().catch(() => {});
+      if (webcamVideo.readyState < 2) {
+        await new Promise(res => { webcamVideo.onloadeddata = () => res(); });
+      }
+      if (myGen !== webcamGen) { stream.getTracks().forEach(t => t.stop()); webcamVideo.srcObject = null; return; }
+
+      // Take over the output: drop any in-flight scene request so its result can't overwrite ours.
+      if (inFlightController) { inFlightController.abort(); inFlightController = null; }
+      outputError.style.display = 'none';
+
+      document.getElementById('prompt-input').value = WEBCAM_PROMPT;   // default webcam prompt
+      inputSource = 'webcam';
+      webcamVideo.style.display = 'block';
+      deselectObject();
+      updateEmptyState();
+      document.getElementById('btn-webcam').classList.add('active');
+      webcamStarting = false;
+      webcamLoopActive = true;
+      runWebcamLoop();
+    }
+
+    function disableWebcam() {
+      webcamGen++;               // invalidate any in-progress enable
+      webcamStarting = false;
+      webcamLoopActive = false;
+      if (inFlightController) inFlightController.abort();
+      if (webcamStream) { webcamStream.getTracks().forEach(t => t.stop()); webcamStream = null; }
+      webcamVideo.srcObject = null;
+      webcamVideo.style.display = 'none';
+      inputSource = 'scene';
+      document.getElementById('btn-webcam').classList.remove('active');
+      outputError.style.display = 'none';
+      updateEmptyState();
+    }
+
+    function toggleWebcam() {
+      if (inputSource === 'webcam' || webcamStarting) disableWebcam();
+      else enableWebcam();
     }
 
     btnGenerate.addEventListener('click', generate);

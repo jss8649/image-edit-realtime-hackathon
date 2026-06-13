@@ -87,7 +87,7 @@ class GenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     image_b64: str
-    mime_type: str = "image/png"
+    mime_type: str = "image/jpeg"
 
 
 # ── base64 <-> PIL helpers ──
@@ -103,8 +103,9 @@ def _decode_image(image_b64: str) -> Image.Image:
 
 
 def _encode_image(img: Image.Image) -> str:
+    # JPEG keeps the response small — important over a tunnel and for the webcam loop.
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.convert("RGB").save(buf, format="JPEG", quality=90)
     return base64.b64encode(buf.getvalue()).decode()
 
 

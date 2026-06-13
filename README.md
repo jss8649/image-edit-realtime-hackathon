@@ -78,6 +78,13 @@ furniture (chairs + sofa + plant on a rug) arranged as a starter scene — it sh
 matching default prompt. Demo assets are Kenney's CC0 "Furniture Kit" (see
 [`assets/CREDITS.txt`](assets/CREDITS.txt)).
 
+**Webcam mode:** click the camera button (or press **W**) to use your live camera as the
+input instead of the 3D scene — it runs a continuous edit loop (defaults the prompt to
+*"Make it claymation"*). The camera needs a **secure context**, so open the app over HTTPS
+or `http://localhost` — a plain `http://<ip>` page will silently block the camera. For a
+quick public HTTPS URL, run a tunnel, e.g.
+`cloudflared --config /dev/null tunnel --url http://localhost:3000`.
+
 ## How realtime works
 
 - **Auto-regenerate:** any edit schedules a debounced generate; only the latest frame is
