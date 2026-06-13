@@ -41,6 +41,7 @@ from anyio import to_thread
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
@@ -132,6 +133,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve bundled demo 3D assets at /assets (the frontend's "Demo scene" loads these).
+_ASSETS_DIR = pathlib.Path(__file__).resolve().parent / "assets"
+if _ASSETS_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_ASSETS_DIR)), name="assets")
 
 
 _INDEX_HTML = pathlib.Path(__file__).resolve().parent / "index.html"

@@ -1,0 +1,5 @@
+Demo 3D assets — Kenney "Furniture Kit"
+Source:  https://kenney.nl/assets/furniture-kit
+License: Creative Commons CC0 1.0 (public domain, no attribution required)
+
+Files: loungeChair.glb, loungeSofa.glb, pottedPlant.glb, rugRectangle.glb

@@ -468,6 +468,18 @@
       </svg>
       <span class="tooltip">Focus <kbd>F</kbd></span>
     </button>
+
+    <div class="toolbar-divider"></div>
+
+    <!-- Load Demo Scene -->
+    <button class="tool-btn" id="btn-demo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 9.5L12 4l9 5.5"/>
+        <path d="M5 10v9a1 1 0 001 1h12a1 1 0 001-1v-9"/>
+        <path d="M9 20v-5a1 1 0 011-1h4a1 1 0 011 1v5"/>
+      </svg>
+      <span class="tooltip">Load demo scene</span>
+    </button>
   </div>
 
   <!-- Hidden file input -->
@@ -532,7 +544,8 @@
 
   <!-- Bottom Bar -->
   <div id="bottom-bar">
-    <input id="prompt-input" type="text" placeholder="Describe what you want to generate...">
+    <input id="prompt-input" type="text" placeholder="Describe what you want to generate..."
+      value="render this scene as a film photograph, maintaining the camera angle, cozy modern interior atop oriental rug on smooth stone floor display">
     <!-- Strength removed: the distilled Klein model does instruction editing, not
          strength-based img2img, and ignores guidance — so it had no honest knob. -->
     <div class="param-group">
@@ -677,64 +690,105 @@
     }
 
     // ── File Loading ──
+    // Shared post-processing: normalize materials, wrap, add to scene. Returns the wrapper.
+    function registerObject(object, name, opts = {}) {
+      object.traverse((child) => {
+        if (child.isMesh) {
+          if (!child.material) {
+            child.material = new THREE.MeshStandardMaterial({ color: 0x888888 });
+          }
+          if (child.material.isMeshBasicMaterial) {
+            const color = child.material.color.clone();
+            child.material = new THREE.MeshStandardMaterial({
+              color, metalness: 0.1, roughness: 0.8,
+            });
+          }
+        }
+      });
+
+      const wrapper = wrapObject(object);
+      wrapper.userData.filename = name;
+
+      scene.add(wrapper);
+      objects.push(wrapper);
+      if (opts.select !== false) selectObject(wrapper);
+      updateEmptyState();
+      markChanged();
+      return wrapper;
+    }
+
+    function objectFromResult(result, type) {
+      switch (type) {
+        case 'gltf': return result.scene;
+        case 'obj': case 'fbx': return result;
+        case 'stl': return new THREE.Mesh(result, new THREE.MeshStandardMaterial({
+          color: 0x6366f1, metalness: 0.3, roughness: 0.6,
+        }));
+      }
+    }
+
     function loadFile(file) {
       const info = getLoaderInfo(file.name);
       if (!info) {
         alert('Unsupported format: ' + file.name + '\nSupported: .glb .gltf .obj .fbx .stl');
         return;
       }
-
       showLoading(true);
       const url = URL.createObjectURL(file);
-
-      const onLoad = (result) => {
-        let object;
-        switch (info.type) {
-          case 'gltf': object = result.scene; break;
-          case 'obj': case 'fbx': object = result; break;
-          case 'stl':
-            object = new THREE.Mesh(result, new THREE.MeshStandardMaterial({
-              color: 0x6366f1, metalness: 0.3, roughness: 0.6,
-            }));
-            break;
-        }
-
-        // Ensure standard materials for highlighting
-        object.traverse((child) => {
-          if (child.isMesh) {
-            if (!child.material) {
-              child.material = new THREE.MeshStandardMaterial({ color: 0x888888 });
-            }
-            if (child.material.isMeshBasicMaterial) {
-              const color = child.material.color.clone();
-              child.material = new THREE.MeshStandardMaterial({
-                color, metalness: 0.1, roughness: 0.8,
-              });
-            }
-          }
-        });
-
-        const wrapper = wrapObject(object);
-        wrapper.userData.filename = file.name;
-
-        scene.add(wrapper);
-        objects.push(wrapper);
-        selectObject(wrapper);
-        updateEmptyState();
-        markChanged();
-
+      info.loader.load(url, (result) => {
+        registerObject(objectFromResult(result, info.type), file.name);
         URL.revokeObjectURL(url);
         showLoading(false);
-      };
-
-      const onError = (err) => {
+      }, undefined, (err) => {
         console.error('Error loading model:', err);
         alert('Failed to load ' + file.name);
         URL.revokeObjectURL(url);
         showLoading(false);
-      };
+      });
+    }
 
-      info.loader.load(url, onLoad, undefined, onError);
+    // Load a model from a URL (e.g. a bundled asset). Returns a Promise<wrapper>.
+    function loadURL(url, name, opts = {}) {
+      const info = getLoaderInfo(name);
+      return new Promise((resolve, reject) => {
+        if (!info) { reject(new Error('Unsupported: ' + name)); return; }
+        info.loader.load(url, (result) => {
+          resolve(registerObject(objectFromResult(result, info.type), name, opts));
+        }, undefined, reject);
+      });
+    }
+
+    // ── Demo Scene ── chairs + sofa + plant on a rug, à la the Krea reference.
+    async function loadDemoScene() {
+      while (objects.length) { selectedObject = objects[0]; deleteSelected(); }
+      selectedObject = null;
+      showLoading(true);
+      const base = API_BASE + '/assets/';
+      // [file, {x, z}, yRotation(rad), scaleMultiplier]
+      const layout = [
+        ['rugRectangle.glb', { x: 0.0,  z: 0.3 },  0,        3.4],
+        ['loungeSofa.glb',   { x: 0.0,  z: 2.0 },  Math.PI,  1.0],
+        ['loungeChair.glb',  { x: -1.8, z: -0.7 }, 2.4,      1.0],
+        ['loungeChair.glb',  { x: 1.8,  z: -0.7 }, 3.9,      1.0],
+        ['pottedPlant.glb',  { x: 2.5,  z: 1.6 },  0,        1.3],
+      ];
+      try {
+        for (const [file, pos, ry, sc] of layout) {
+          const w = await loadURL(base + file, file, { select: false });
+          if (sc !== 1) w.scale.multiplyScalar(sc);
+          w.position.x = pos.x;
+          w.position.z = pos.z;
+          w.rotation.y = ry;
+          if (file.startsWith('rug')) w.position.y = 0.02;  // lie flat on the floor
+        }
+        deselectObject();
+        markChanged();
+      } catch (e) {
+        console.error('Demo scene failed:', e);
+        alert('Could not load demo assets from ' + base + '\n' + e.message);
+      } finally {
+        showLoading(false);
+      }
     }
 
     // Wrap model in a Group so the model's center is at the group origin.
@@ -1063,6 +1117,7 @@
     document.getElementById('btn-upload').addEventListener('click', () => fileInput.click());
     document.getElementById('btn-delete').addEventListener('click', deleteSelected);
     document.getElementById('btn-focus').addEventListener('click', focusCamera);
+    document.getElementById('btn-demo').addEventListener('click', loadDemoScene);
 
     const fileInput = document.getElementById('file-input');
     fileInput.addEventListener('change', () => {

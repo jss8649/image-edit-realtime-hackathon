@@ -73,6 +73,11 @@ Prefer to open the file directly? Open `index.html` from disk (it falls back to
 Import a model (`.glb .gltf .obj .fbx .stl`), then move/rotate/scale it — generation
 auto-triggers ~300ms after you stop. The **Generate** button still works for manual runs.
 
+Or click the **demo-scene** button (house icon) in the toolbar to load a bundled set of
+furniture (chairs + sofa + plant on a rug) arranged as a starter scene — it ships with a
+matching default prompt. Demo assets are Kenney's CC0 "Furniture Kit" (see
+[`assets/CREDITS.txt`](assets/CREDITS.txt)).
+
 ## How realtime works
 
 - **Auto-regenerate:** any edit schedules a debounced generate; only the latest frame is
