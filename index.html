@@ -502,7 +502,7 @@
   </div>
 
   <!-- Hidden file input -->
-  <input type="file" id="file-input" accept=".glb,.gltf,.obj,.fbx,.stl" multiple style="display:none">
+  <input type="file" id="file-input" accept=".glb,.gltf,.obj,.fbx,.stl,.usdz" multiple style="display:none">
 
   <!-- Main Content -->
   <div id="main">
@@ -544,7 +544,7 @@
             <line x1="12" y1="22.08" x2="12" y2="12"/>
           </svg>
           <p>Drop a 3D file or click Import</p>
-          <span class="hint">.glb .gltf .obj .fbx .stl</span>
+          <span class="hint">.glb .gltf .obj .fbx .stl .usdz</span>
         </div>
       </div>
     </div>
@@ -603,6 +603,7 @@
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
     import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
     import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+    import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
 
     // ── Backend endpoint ──
     // When the page is served BY the backend (http://<box>:3000/), default to that
@@ -712,6 +713,7 @@
     const objLoader = new OBJLoader();
     const fbxLoader = new FBXLoader();
     const stlLoader = new STLLoader();
+    const usdzLoader = new USDZLoader();
 
     function getLoaderInfo(filename) {
       const ext = filename.split('.').pop().toLowerCase();
@@ -720,6 +722,7 @@
         case 'obj': return { loader: objLoader, type: 'obj' };
         case 'fbx': return { loader: fbxLoader, type: 'fbx' };
         case 'stl': return { loader: stlLoader, type: 'stl' };
+        case 'usdz': return { loader: usdzLoader, type: 'usdz' };
         default: return null;
       }
     }
@@ -755,7 +758,7 @@
     function objectFromResult(result, type) {
       switch (type) {
         case 'gltf': return result.scene;
-        case 'obj': case 'fbx': return result;
+        case 'obj': case 'fbx': case 'usdz': return result;
         case 'stl': return new THREE.Mesh(result, new THREE.MeshStandardMaterial({
           color: 0x6366f1, metalness: 0.3, roughness: 0.6,
         }));
@@ -765,7 +768,7 @@
     function loadFile(file) {
       const info = getLoaderInfo(file.name);
       if (!info) {
-        alert('Unsupported format: ' + file.name + '\nSupported: .glb .gltf .obj .fbx .stl');
+        alert('Unsupported format: ' + file.name + '\nSupported: .glb .gltf .obj .fbx .stl .usdz');
         return;
       }
       showLoading(true);
