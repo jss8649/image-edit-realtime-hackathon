@@ -533,18 +533,15 @@
   <!-- Bottom Bar -->
   <div id="bottom-bar">
     <input id="prompt-input" type="text" placeholder="Describe what you want to generate...">
-    <div class="param-group">
-      <label>Strength</label>
-      <input type="range" id="param-strength" min="0" max="100" value="75" oninput="this.nextElementSibling.textContent=this.value/100">
-      <span class="param-value">0.75</span>
-    </div>
+    <!-- Strength removed: the distilled Klein model does instruction editing, not
+         strength-based img2img, and ignores guidance — so it had no honest knob. -->
     <div class="param-group">
       <label>Steps</label>
-      <input type="number" id="param-steps" value="20" min="1" max="150">
+      <input type="number" id="param-steps" value="4" min="1" max="8" title="Klein is distilled to 4 steps">
     </div>
     <div class="param-group">
       <label>Seed</label>
-      <input type="number" id="param-seed" value="42" min="-1" max="999999999">
+      <input type="number" id="param-seed" value="42" min="0" max="999999999" title="Locked by default for frame-to-frame coherence">
     </div>
     <div class="param-group">
       <label>Size</label>
@@ -572,6 +569,14 @@
     import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
     import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
+    // ── Backend endpoint (configurable) ──
+    // The H100 box may be remote — point the frontend at it without editing code:
+    //   index.html?api=http://my-h100-box:8000   (or set localStorage 'apiBase')
+    // Falls back to localhost (use an SSH port-forward of 8000 if running remote).
+    const API_BASE = (new URLSearchParams(location.search).get('api')
+      || localStorage.getItem('apiBase')
+      || 'http://localhost:8000').replace(/\/+$/, '');
+
     // ── State ──
     const objects = [];
     let selectedObject = null;
@@ -585,9 +590,15 @@
     let sceneChanged = true; // true initially so first generate always works
     let generateTimer = null;
 
+    // Auto-regenerate: every edit schedules a debounced generate so the AI output
+    // tracks the scene in ~realtime. The manual Generate button still works too.
+    const AUTO_REGEN = true;
+    const AUTO_REGEN_DELAY_MS = 300;
+
     function markChanged() {
       sceneChanged = true;
       document.getElementById('change-dot').classList.add('visible');
+      if (AUTO_REGEN) scheduleGenerate(AUTO_REGEN_DELAY_MS);
     }
 
     function clearChanged() {
@@ -595,8 +606,8 @@
       document.getElementById('change-dot').classList.remove('visible');
     }
 
-    // Debounce scaffold for future auto mode
-    function scheduleGenerate(delayMs = 500) {
+    // Debounce: fire a generate only after the user stops editing for delayMs.
+    function scheduleGenerate(delayMs = AUTO_REGEN_DELAY_MS) {
       if (generateTimer) clearTimeout(generateTimer);
       generateTimer = setTimeout(() => { generate(); }, delayMs);
     }
@@ -1121,8 +1132,36 @@
     const placeholderText = document.querySelector('#output-panel .placeholder-text');
     const btnGenerate = document.getElementById('btn-generate');
 
+    // Lock the generated frame to the captured scene so edits read as the "same shot".
+    const COMPOSITION_PREFIX = 'same composition and camera angle as the reference image, photorealistic, ';
+    const CAPTURE_QUALITY = 0.85;
+    let inFlightController = null;
+
+    // Render a clean reference frame for the model: hide the grid (noise the model
+    // misreads), then letterbox the capture into a width×height frame (preserves
+    // composition, no distortion) and JPEG-encode it to keep the upload small.
+    function captureReference(width, height) {
+      const gridWasVisible = gridHelper.visible;
+      gridHelper.visible = false;
+      renderer.render(scene, camera);
+      gridHelper.visible = gridWasVisible;
+
+      const src = renderer.domElement;
+      const off = document.createElement('canvas');
+      off.width = width;
+      off.height = height;
+      const ctx = off.getContext('2d');
+      ctx.fillStyle = '#1e1e32';                 // scene background — seamless letterbox
+      ctx.fillRect(0, 0, width, height);
+      const scale = Math.min(width / src.width, height / src.height);
+      const dw = src.width * scale, dh = src.height * scale;
+      ctx.drawImage(src, (width - dw) / 2, (height - dh) / 2, dw, dh);
+
+      return off.toDataURL('image/jpeg', CAPTURE_QUALITY).split(',')[1];
+    }
+
     async function generate() {
-      // Skip if nothing changed
+      // Skip if nothing changed (manual button; auto-regen only fires on a change).
       if (!sceneChanged) {
         const toast = document.getElementById('no-changes-toast');
         toast.classList.add('visible');
@@ -1130,36 +1169,34 @@
         return;
       }
 
-      // Capture the current viewport
-      renderer.render(scene, camera);
-      const dataUrl = renderer.domElement.toDataURL('image/png');
-      const imageBase64 = dataUrl.split(',')[1];
+      // Only the latest frame matters — abort any in-flight request so the
+      // auto-loop never floods the backend.
+      if (inFlightController) inFlightController.abort();
+      const controller = new AbortController();
+      inFlightController = controller;
 
-      const prompt = document.getElementById('prompt-input').value;
-      const strength = parseInt(document.getElementById('param-strength').value) / 100;
+      const promptRaw = document.getElementById('prompt-input').value;
+      const prompt = COMPOSITION_PREFIX + promptRaw;
       const steps = parseInt(document.getElementById('param-steps').value);
       const seed = parseInt(document.getElementById('param-seed').value);
       const width = parseInt(document.getElementById('param-width').value);
       const height = parseInt(document.getElementById('param-height').value);
 
-      // Show loading state
+      const imageBase64 = captureReference(width, height);
+
+      // Consider this change handled now, so edits made *during* inference queue a
+      // fresh run (which will supersede this one).
+      clearChanged();
+
       outputLoading.classList.add('active');
       outputError.style.display = 'none';
-      btnGenerate.disabled = true;
 
       try {
-        const res = await fetch('http://localhost:8000/generate', {
+        const res = await fetch(API_BASE + '/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            image_b64: imageBase64,
-            prompt,
-            strength,
-            steps,
-            seed,
-            width,
-            height,
-          }),
+          signal: controller.signal,
+          body: JSON.stringify({ image_b64: imageBase64, prompt, steps, seed, width, height }),
         });
 
         if (!res.ok) {
@@ -1169,22 +1206,25 @@
 
         const data = await res.json();
 
-        // Display the returned image
         if (data.image_b64) {
           const mime = data.mime_type || 'image/png';
           outputImage.src = 'data:' + mime + ';base64,' + data.image_b64;
           outputImage.style.display = 'block';
           placeholderIcon.style.display = 'none';
           placeholderText.style.display = 'none';
-          clearChanged();
         }
       } catch (err) {
+        if (err.name === 'AbortError') return;     // superseded by a newer frame
         console.error('Generate error:', err);
         outputError.textContent = 'Error: ' + err.message;
         outputError.style.display = 'block';
+        markChanged();                             // let the user retry
       } finally {
-        outputLoading.classList.remove('active');
-        btnGenerate.disabled = false;
+        // Only the latest request clears the spinner / handle.
+        if (inFlightController === controller) {
+          inFlightController = null;
+          outputLoading.classList.remove('active');
+        }
       }
     }
 
@@ -1192,7 +1232,6 @@
 
     // Prompt and param changes count as a change
     document.getElementById('prompt-input').addEventListener('input', markChanged);
-    document.getElementById('param-strength').addEventListener('input', markChanged);
     document.getElementById('param-steps').addEventListener('input', markChanged);
     document.getElementById('param-seed').addEventListener('input', markChanged);
     document.getElementById('param-width').addEventListener('input', markChanged);
