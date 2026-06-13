@@ -569,13 +569,15 @@
     import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
     import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
-    // ── Backend endpoint (configurable) ──
-    // The H100 box may be remote — point the frontend at it without editing code:
-    //   index.html?api=http://my-h100-box:8000   (or set localStorage 'apiBase')
-    // Falls back to localhost (use an SSH port-forward of 8000 if running remote).
-    const API_BASE = (new URLSearchParams(location.search).get('api')
+    // ── Backend endpoint ──
+    // When the page is served BY the backend (http://<box>:3000/), default to that
+    // same origin so it works with no config. Override with ?api=http://host:3000
+    // or localStorage 'apiBase'. Opened from a file:// path, fall back to localhost.
+    const API_BASE = (
+      new URLSearchParams(location.search).get('api')
       || localStorage.getItem('apiBase')
-      || 'http://localhost:8000').replace(/\/+$/, '');
+      || (location.protocol.startsWith('http') ? location.origin : 'http://localhost:3000')
+    ).replace(/\/+$/, '');
 
     // ── State ──
     const objects = [];

@@ -15,7 +15,7 @@ Env vars:
     KLEIN_ECHO        - "1" to force echo mode (mirror input back, no GPU)
     KLEIN_CPU_OFFLOAD - "1" to use model CPU offload (fallback if VRAM is tight)
     KLEIN_NO_WARMUP   - "1" to skip the startup warmup inference
-    PORT              - server port (default 8000)
+    PORT              - server port (default 3000)
 
 Usage:
     pip install -r requirements.txt
@@ -27,12 +27,14 @@ import base64
 import io
 import logging
 import os
+import pathlib
 from contextlib import asynccontextmanager
 from functools import partial
 
 from anyio import to_thread
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from PIL import Image
 from pydantic import BaseModel
 
@@ -41,7 +43,7 @@ import pipeline
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("server")
 
-PORT = int(os.environ.get("PORT", "8000"))
+PORT = int(os.environ.get("PORT", "3000"))
 ECHO_MODE = (
     os.environ.get("KLEIN_ECHO", "").lower() in ("1", "true", "yes")
     or not pipeline.is_available()
@@ -116,7 +118,16 @@ app.add_middleware(
 )
 
 
+_INDEX_HTML = pathlib.Path(__file__).resolve().parent / "index.html"
+
+
 @app.get("/")
+async def index():
+    # Serve the UI from the backend so a remote box just needs http://<box>:PORT/
+    return FileResponse(_INDEX_HTML)
+
+
+@app.get("/healthz")
 async def health():
     return {"status": "ok", "mode": "echo" if ECHO_MODE else "klein",
             "model": pipeline.MODEL_ID, "busy": gpu_lock.locked()}

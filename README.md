@@ -56,13 +56,16 @@ KLEIN_ECHO=1 python server.py
 
 ### 4. Open the frontend
 
-Open `index.html` in your browser. It talks to `http://localhost:8000` by default.
+The server serves the UI itself, so just visit it in a browser:
 
-**If the H100 box is remote/headless**, either:
+- On the box: <http://localhost:3000/>
+- Remote box: **http://&lt;box&gt;:3000/** (the page calls the API on the same origin, so
+  it works with no config — just make sure port 3000 is reachable).
 
-- SSH port-forward the port to your laptop: `ssh -L 8000:localhost:8000 user@h100-box`, then open `index.html` locally; **or**
-- point the page at the box directly without editing code:
-  `index.html?api=http://<h100-box>:8000` (also persisted via `localStorage.apiBase`).
+Prefer to open the file directly? Open `index.html` from disk (it falls back to
+`http://localhost:3000`), handy with an SSH port-forward
+(`ssh -L 3000:localhost:3000 user@box`). Point it anywhere with
+`?api=http://<box>:3000` or `localStorage.apiBase`.
 
 Import a model (`.glb .gltf .obj .fbx .stl`), then move/rotate/scale it — generation
 auto-triggers ~300ms after you stop. The **Generate** button still works for manual runs.
@@ -87,7 +90,7 @@ auto-triggers ~300ms after you stop. The **Generate** button still works for man
 | `KLEIN_ECHO` | unset | `1` forces echo mode (mirror input back, no GPU). Auto-enabled if CUDA is unavailable. |
 | `KLEIN_CPU_OFFLOAD` | unset | `1` enables model CPU offload (fallback if VRAM is tight; higher latency). |
 | `KLEIN_NO_WARMUP` | unset | `1` skips the startup warmup inference. |
-| `PORT` | `8000` | Server port. |
+| `PORT` | `3000` | Server port. |
 
 ## API
 
