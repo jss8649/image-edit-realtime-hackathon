@@ -1,0 +1,25 @@
+# Self-hosted FLUX.2 Klein 9B (distilled, 4-step) — realtime in-process image editing.
+# Target hardware: 1x NVIDIA H100 80GB, bf16, no quantization (everything resident on GPU).
+
+# --- PyTorch (CUDA build) ---
+# This box already ships torch 2.7.0 built against CUDA 12.8 system-wide.
+# To provision fresh, install a matching CUDA wheel, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+torch>=2.7
+
+# --- Diffusers / FLUX.2 ---
+# FLUX.2 support is recent; needs diffusers main (or any release that ships
+# Flux2KleinPipeline). Pin to a tag once one is cut.
+diffusers @ git+https://github.com/huggingface/diffusers.git
+transformers>=4.57      # Klein's text encoder is Qwen3 (Qwen3ForCausalLM)
+accelerate
+safetensors
+sentencepiece
+protobuf
+jinja2>=3.1.0          # required by transformers apply_chat_template (Qwen3)
+
+# --- Image + server ---
+pillow>=10.3
+huggingface_hub[cli]    # `huggingface-cli login` — FLUX.2-klein-9B weights are gated
+fastapi
+uvicorn[standard]
