@@ -146,8 +146,8 @@ edit models ignore guidance/strength (prompt-driven editing), matching the UI.
   "prompt": "a futuristic city",
   "steps": 4,
   "seed": 42,
-  "width": 512,
-  "height": 512
+  "width": 1024,
+  "height": 1024
 }
 ```
 

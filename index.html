@@ -558,9 +558,9 @@
     </div>
     <div class="param-group">
       <label>Size</label>
-      <input type="number" id="param-width" value="512" min="64" max="2048" step="64" style="width:44px">
+      <input type="number" id="param-width" value="1024" min="64" max="2048" step="64" style="width:44px">
       <span class="param-value" style="min-width:auto">x</span>
-      <input type="number" id="param-height" value="512" min="64" max="2048" step="64" style="width:44px">
+      <input type="number" id="param-height" value="1024" min="64" max="2048" step="64" style="width:44px">
     </div>
     <button id="btn-generate">Generate<span class="change-dot" id="change-dot"></span></button>
   </div>
@@ -1191,7 +1191,7 @@
 
     // Lock the generated frame to the captured scene so edits read as the "same shot".
     const COMPOSITION_PREFIX = 'same composition and camera angle as the reference image, photorealistic, ';
-    const CAPTURE_QUALITY = 0.85;
+    const CAPTURE_QUALITY = 0.92;
     let inFlightController = null;
 
     // Render a clean reference frame for the model: hide the grid (noise the model

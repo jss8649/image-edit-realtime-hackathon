@@ -35,7 +35,7 @@ DEFAULT_GUIDANCE = 1.0
 
 # Snap requested output dims to something the VAE/patchifier is happy with.
 _DIM_MULTIPLE = 32
-_DIM_MIN, _DIM_MAX = 256, 1536
+_DIM_MIN, _DIM_MAX = 256, 2048
 
 _pipe = None
 
