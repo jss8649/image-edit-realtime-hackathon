@@ -293,7 +293,24 @@ async def job_model(job_id: str):
 # three.js can't read binary USDC (which most .usdz files are), so convert
 # server-side with usd2gltf. POST the raw .usdz bytes; get a GLB back.
 
+_BLENDER_BIN = os.environ.get("BLENDER_BIN", os.path.expanduser("~/tools/blender/blender"))
+_USDZ_SCRIPT = str(pathlib.Path(__file__).resolve().parent / "usdz_convert.py")
+
+
 def _usdz_to_glb(in_path: str, out_path: str):
+    """USDZ -> GLB. Blender (robust, keeps materials) first; usd2gltf as a fallback."""
+    if os.path.exists(_BLENDER_BIN):
+        try:
+            subprocess.run(
+                [_BLENDER_BIN, "-b", "--python-exit-code", "1", "-P", _USDZ_SCRIPT,
+                 "--", in_path, out_path],
+                check=True, capture_output=True, timeout=300,
+            )
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                return
+        except Exception as exc:
+            log.warning("Blender USDZ convert failed, falling back to usd2gltf: %s", exc)
+
     exe = os.path.expanduser("~/.local/bin/usd2gltf")
     if not os.path.exists(exe):
         exe = "usd2gltf"
@@ -314,11 +331,14 @@ async def convert_usdz(request: Request):
     try:
         await to_thread.run_sync(partial(_usdz_to_glb, in_path, out_path))
     except subprocess.CalledProcessError as exc:
-        log.error("usd2gltf failed: %s", (exc.stderr or b"").decode("utf-8", "ignore")[:500])
-        raise HTTPException(502, "USDZ conversion failed")
+        log.error("USDZ conversion failed: %s", (exc.stderr or b"").decode("utf-8", "ignore")[:800])
+        # 400 (not 5xx) so the Cloudflare tunnel relays our message instead of an HTML page.
+        raise HTTPException(400, "Could not convert this USDZ (unsupported features in the file).")
     except Exception as exc:
         log.exception("USDZ conversion error")
-        raise HTTPException(502, f"USDZ conversion failed: {exc}")
+        raise HTTPException(400, f"Could not convert this USDZ: {exc}")
+    if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+        raise HTTPException(400, "USDZ conversion produced no output.")
     return FileResponse(out_path, media_type="model/gltf-binary", filename="model.glb")
 
 

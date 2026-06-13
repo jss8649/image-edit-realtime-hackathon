@@ -160,7 +160,10 @@ Without `TRELLIS_URL`, the `/generate-3d` flow still works but returns a placeho
 asset (handy for developing the UI without the GPU sidecar).
 
 **USDZ import:** `.usdz` files are accepted too. Since three.js can't read binary USDC
-(what most `.usdz` are), the server converts them to GLB with `usd2gltf` (`/convert-usdz`).
+(what most `.usdz` are), the server converts them to GLB (`/convert-usdz`) using **Blender**
+headless (robust, keeps materials), with `usd2gltf` as a fallback. Point `BLENDER_BIN` at a
+Blender binary (default `~/tools/blender/blender`); needs the usual X11 libs
+(`libsm6 libxxf86vm1 libxfixes3 libxrender1 …`).
 
 ## API
 
