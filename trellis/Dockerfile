@@ -19,9 +19,10 @@ WORKDIR /workspace
 RUN git clone --recurse-submodules https://github.com/microsoft/TRELLIS.git
 WORKDIR /workspace/TRELLIS
 
-# Build TRELLIS's CUDA extensions into the base env (no --new-env). Use xformers
-# (prebuilt) instead of flash-attn to avoid a very long compile.
-RUN . ./setup.sh --basic --xformers --spconv --nvdiffrast --diffoctreerast --vox2seq --mipgaussian --kaolin
+# Base Python deps only. The CUDA extensions (spconv/xformers/kaolin/nvdiffrast/
+# diffoctreerast/mipgaussian) require a GPU, which `docker build` doesn't expose —
+# so build.sh installs them in a running GPU container and commits the result.
+RUN . ./setup.sh --basic
 
 RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
 

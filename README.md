@@ -136,7 +136,31 @@ edit models ignore guidance/strength (prompt-driven editing), matching the UI.
 | `FAL_MODEL` | `fal-ai/flux-2/klein/9b/edit` | FAL model id. |
 | `FIREWORKS_API_KEY` | unset | Fireworks API key `fw_...` (required for `fireworks`). |
 | `FIREWORKS_MODEL` | `flux-kontext-pro` | Fireworks model (`flux-kontext-pro` / `-max`). |
+| `TRELLIS_URL` | unset | URL of the TRELLIS image→3D sidecar (e.g. `http://localhost:8100`). If unset, image→3D returns a stub asset. |
 | `PORT` | `3000` | Server port. |
+
+## Create 3D objects from a photo (TRELLIS sidecar)
+
+The **"Create 3D from image"** toolbar button turns a photo (an upload, or the live
+webcam frame) into a GLB and drops it into the scene. Reconstruction runs on a
+self-hosted **[microsoft/TRELLIS](https://github.com/microsoft/TRELLIS)** (`TRELLIS-image-large`,
+MIT) sidecar — a separate Docker container so its CUDA stack (torch 2.4 / CUDA 11.8)
+doesn't clash with the main server. ~15s/asset on the H100; background removal (rembg)
+is built in.
+
+```bash
+cd trellis && sudo ./build.sh          # builds trellis-sidecar:latest (compiles CUDA extensions)
+sudo docker run -d --name trellis --gpus all -p 8100:8100 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface trellis-sidecar:latest
+# then start the main server pointed at it:
+TRELLIS_URL=http://localhost:8100 python server.py
+```
+
+Without `TRELLIS_URL`, the `/generate-3d` flow still works but returns a placeholder
+asset (handy for developing the UI without the GPU sidecar).
+
+**USDZ import:** `.usdz` files are accepted too. Since three.js can't read binary USDC
+(what most `.usdz` are), the server converts them to GLB with `usd2gltf` (`/convert-usdz`).
 
 ## API
 

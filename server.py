@@ -35,13 +35,14 @@ import logging
 import os
 import pathlib
 import shutil
+import subprocess
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from functools import partial
 
 from anyio import to_thread
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -286,6 +287,39 @@ async def job_model(job_id: str):
     if job["status"] != "done":
         raise HTTPException(409, f"job not ready (status={job['status']})")
     return FileResponse(job["glb"], media_type="model/gltf-binary", filename="object.glb")
+
+
+# ── USDZ → GLB conversion ───────────────────────────────────────────────────
+# three.js can't read binary USDC (which most .usdz files are), so convert
+# server-side with usd2gltf. POST the raw .usdz bytes; get a GLB back.
+
+def _usdz_to_glb(in_path: str, out_path: str):
+    exe = os.path.expanduser("~/.local/bin/usd2gltf")
+    if not os.path.exists(exe):
+        exe = "usd2gltf"
+    subprocess.run([exe, "-i", in_path, "-o", out_path],
+                   check=True, capture_output=True, timeout=180)
+
+
+@app.post("/convert-usdz")
+async def convert_usdz(request: Request):
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(400, "empty body")
+    uid = uuid.uuid4().hex[:12]
+    in_path = str(_JOBS_DIR / f"{uid}.usdz")
+    out_path = str(_JOBS_DIR / f"{uid}.glb")
+    with open(in_path, "wb") as f:
+        f.write(raw)
+    try:
+        await to_thread.run_sync(partial(_usdz_to_glb, in_path, out_path))
+    except subprocess.CalledProcessError as exc:
+        log.error("usd2gltf failed: %s", (exc.stderr or b"").decode("utf-8", "ignore")[:500])
+        raise HTTPException(502, "USDZ conversion failed")
+    except Exception as exc:
+        log.exception("USDZ conversion error")
+        raise HTTPException(502, f"USDZ conversion failed: {exc}")
+    return FileResponse(out_path, media_type="model/gltf-binary", filename="model.glb")
 
 
 if __name__ == "__main__":
