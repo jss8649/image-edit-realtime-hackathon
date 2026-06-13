@@ -34,6 +34,9 @@ import io
 import logging
 import os
 import pathlib
+import shutil
+import tempfile
+import uuid
 from contextlib import asynccontextmanager
 from functools import partial
 
@@ -88,6 +91,10 @@ class GenerateRequest(BaseModel):
 class GenerateResponse(BaseModel):
     image_b64: str
     mime_type: str = "image/jpeg"
+
+
+class Generate3DRequest(BaseModel):
+    image_b64: str
 
 
 # ── base64 <-> PIL helpers ──
@@ -194,6 +201,78 @@ async def generate(req: GenerateRequest):
         log.exception("%s generation failed", MODE)
         raise HTTPException(502, f"{MODE} generation failed: {exc}")
     return GenerateResponse(image_b64=_encode_image(out))
+
+
+# ── Image → 3D object job API ───────────────────────────────────────────────
+# POST /generate-3d  -> {job_id}
+# GET  /jobs/{id}     -> {status: queued|running|done|error}
+# GET  /jobs/{id}/model.glb -> the generated GLB
+#
+# Reconstruction is currently STUBBED (returns a sample asset after a short delay).
+# To go live, replace _reconstruct_3d's body with a call to the TRELLIS sidecar
+# (POST the image to the TRELLIS service, write its GLB to out_path) — nothing else
+# in this file or the frontend needs to change.
+
+_JOBS: dict = {}
+_JOBS_DIR = pathlib.Path(tempfile.gettempdir()) / "klein_3d_jobs"
+_JOBS_DIR.mkdir(exist_ok=True)
+_job_sema = asyncio.Semaphore(1)          # one reconstruction at a time (shares the GPU)
+_STUB_ASSETS = ["pottedPlant.glb", "loungeChair.glb", "loungeSofa.glb"]
+_stub_counter = {"n": 0}
+
+
+def _reconstruct_3d(image: Image.Image, out_path: str):
+    """Image -> textured GLB at out_path. STUB: simulate latency + return a sample asset.
+
+    Real impl (TRELLIS sidecar): POST `image` to the TRELLIS service and stream its
+    GLB bytes to out_path. Keep this function blocking — it runs in a worker thread.
+    """
+    import time
+    time.sleep(3)  # simulate reconstruction latency
+    pick = _STUB_ASSETS[_stub_counter["n"] % len(_STUB_ASSETS)]
+    _stub_counter["n"] += 1
+    shutil.copyfile(_ASSETS_DIR / pick, out_path)
+
+
+async def _run_3d_job(job_id: str, image: Image.Image):
+    async with _job_sema:
+        _JOBS[job_id]["status"] = "running"
+        out = str(_JOBS_DIR / f"{job_id}.glb")
+        try:
+            await to_thread.run_sync(partial(_reconstruct_3d, image, out))
+            _JOBS[job_id].update(status="done", glb=out)
+            log.info("3D job %s done -> %s", job_id, out)
+        except Exception as exc:
+            log.exception("3D reconstruction failed")
+            _JOBS[job_id].update(status="error", error=str(exc))
+
+
+@app.post("/generate-3d")
+async def generate_3d(req: Generate3DRequest):
+    img = _decode_image(req.image_b64)
+    job_id = uuid.uuid4().hex[:12]
+    _JOBS[job_id] = {"status": "queued", "glb": None, "error": None}
+    asyncio.create_task(_run_3d_job(job_id, img))
+    log.info("3D job %s queued", job_id)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/jobs/{job_id}")
+async def job_status(job_id: str):
+    job = _JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "no such job")
+    return {"job_id": job_id, "status": job["status"], "error": job["error"]}
+
+
+@app.get("/jobs/{job_id}/model.glb")
+async def job_model(job_id: str):
+    job = _JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "no such job")
+    if job["status"] != "done":
+        raise HTTPException(409, f"job not ready (status={job['status']})")
+    return FileResponse(job["glb"], media_type="model/gltf-binary", filename="object.glb")
 
 
 if __name__ == "__main__":

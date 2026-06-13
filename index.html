@@ -489,6 +489,16 @@
       </svg>
       <span class="tooltip">Webcam <kbd>W</kbd></span>
     </button>
+
+    <!-- Create a 3D object from an image (webcam frame or uploaded photo) -->
+    <button class="tool-btn" id="btn-make3d">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
+        <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+        <line x1="12" y1="22.08" x2="12" y2="12"/>
+      </svg>
+      <span class="tooltip">Create 3D from image</span>
+    </button>
   </div>
 
   <!-- Hidden file input -->
@@ -1145,6 +1155,7 @@
     document.getElementById('btn-focus').addEventListener('click', focusCamera);
     document.getElementById('btn-demo').addEventListener('click', loadDemoScene);
     document.getElementById('btn-webcam').addEventListener('click', toggleWebcam);
+    document.getElementById('btn-make3d').addEventListener('click', createObject);
     window.addEventListener('beforeunload', () => {
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
     });
@@ -1411,6 +1422,82 @@
     function toggleWebcam() {
       if (inputSource === 'webcam' || webcamStarting) disableWebcam();
       else enableWebcam();
+    }
+
+    // ── Image → 3D object (TRELLIS; reconstruction is stubbed server-side for now) ──
+    function set3DStatus(msg) {
+      const el = document.getElementById('loading-indicator');
+      if (msg) { el.textContent = msg; el.style.display = 'block'; }
+      else { el.style.display = 'none'; el.textContent = 'Loading model...'; }
+    }
+
+    function pickImageFile() {
+      return new Promise((resolve) => {
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = 'image/*';
+        inp.onchange = () => resolve(inp.files && inp.files[0] ? inp.files[0] : null);
+        inp.click();
+      });
+    }
+
+    function fileToJpegBase64(file, maxDim = 768) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL('image/jpeg', 0.9).split(',')[1]);
+        };
+        img.onerror = reject;
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    async function poll3DJob(jobId, { interval = 1000, timeout = 180000 } = {}) {
+      const t0 = performance.now();
+      while (performance.now() - t0 < timeout) {
+        const r = await fetch(API_BASE + '/jobs/' + jobId);
+        if (!r.ok) throw new Error('job lookup failed (' + r.status + ')');
+        const j = await r.json();
+        if (j.status === 'done') return API_BASE + '/jobs/' + jobId + '/model.glb';
+        if (j.status === 'error') throw new Error(j.error || 'reconstruction failed');
+        await new Promise(res => setTimeout(res, interval));
+      }
+      throw new Error('timed out');
+    }
+
+    async function createObject() {
+      // Input image: the live webcam frame if the camera is on, else a photo the user picks.
+      let imageBase64;
+      if (inputSource === 'webcam' && webcamVideo.readyState >= 2) {
+        imageBase64 = captureReference(768, 768);
+      } else {
+        const file = await pickImageFile();
+        if (!file) return;
+        imageBase64 = await fileToJpegBase64(file, 768);
+      }
+      if (!imageBase64) return;
+
+      set3DStatus('Creating 3D object…');
+      try {
+        const res = await fetch(API_BASE + '/generate-3d', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_b64: imageBase64 }),
+        });
+        if (!res.ok) throw new Error((await res.text()) || ('HTTP ' + res.status));
+        const { job_id } = await res.json();
+        const glbUrl = await poll3DJob(job_id);
+        if (inputSource === 'webcam') disableWebcam();   // show the new object in the 3D scene
+        await loadURL(glbUrl, 'object.glb', { select: true });
+        focusCamera();
+      } catch (e) {
+        console.error('Create 3D object failed:', e);
+        alert('Could not create 3D object: ' + e.message);
+      } finally {
+        set3DStatus(null);
+      }
     }
 
     btnGenerate.addEventListener('click', generate);
