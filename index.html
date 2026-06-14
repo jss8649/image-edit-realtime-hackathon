@@ -827,7 +827,7 @@
     }
 
     // ── Demo Scene ── chairs + sofa + plant on a rug, à la the Krea reference.
-    async function loadDemoScene() {
+    async function loadDemoScene({ silent = false } = {}) {
       while (objects.length) { selectedObject = objects[0]; deleteSelected(); }
       selectedObject = null;
       document.getElementById('prompt-input').value = DEMO_PROMPT;
@@ -854,7 +854,7 @@
         markChanged();
       } catch (e) {
         console.error('Demo scene failed:', e);
-        alert('Could not load demo assets from ' + base + '\n' + e.message);
+        if (!silent) alert('Could not load demo assets from ' + base + '\n' + e.message);
       } finally {
         showLoading(false);
       }
@@ -1560,6 +1560,9 @@
       renderer.render(scene, camera);
     }
     animate();
+
+    // Load the demo scene on startup so the canvas isn't empty (silent on failure).
+    loadDemoScene({ silent: true });
   </script>
 </body>
 </html>
