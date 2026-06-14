@@ -688,7 +688,7 @@
     const camera = new THREE.PerspectiveCamera(
       50, wrapper.clientWidth / wrapper.clientHeight, 0.01, 1000
     );
-    camera.position.set(4, 3, 5);
+    camera.position.set(6, 4.5, 8);
     camera.lookAt(0, 0, 0);
 
     // ── Renderer ──
@@ -837,11 +837,11 @@
       // inward on the sides, plant in the back corner — all on a centered rug.
       // [file, {x, z}, yRotation(rad), scaleMultiplier]
       const layout = [
-        ['rugRectangle.glb', { x: 0.0,  z: 0.0 },  0,      3.8],
-        ['loungeSofa.glb',   { x: 0.0,  z: -1.8 }, 0,      1.0],   // back, faces +z (the group)
-        ['loungeChair.glb',  { x: -2.3, z: 0.1 },  1.85,   1.0],   // left, angled toward center
-        ['loungeChair.glb',  { x: 2.3,  z: 0.1 },  -1.85,  1.0],   // right, angled toward center
-        ['pottedPlant.glb',  { x: 2.9,  z: -1.9 }, 0,      1.2],   // back corner
+        ['rugRectangle.glb', { x: 0.0,  z: 0.2 },  0,        3.8],
+        ['loungeSofa.glb',   { x: 0.0,  z: 2.2 },  Math.PI,  1.1],   // foreground, faces into room
+        ['loungeChair.glb',  { x: -2.2, z: -1.4 }, 0.74,     1.0],   // back-left, faces center-front
+        ['loungeChair.glb',  { x: 2.2,  z: -1.4 }, -0.74,    1.0],   // back-right, faces center-front
+        ['pottedPlant.glb',  { x: 2.9,  z: -2.0 }, 0,        1.2],   // back corner
       ];
       try {
         for (const [file, pos, ry, sc] of layout) {
@@ -1177,7 +1177,7 @@
         objects.forEach(obj => box.expandByObject(obj));
         box.getCenter(target);
       }
-      camera.position.set(target.x + 4, target.y + 3, target.z + 5);
+      camera.position.set(target.x + 6, target.y + 4.5, target.z + 8);
       camera.lookAt(target);
     }
 
