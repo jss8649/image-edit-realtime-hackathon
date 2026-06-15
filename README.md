@@ -19,7 +19,24 @@ the result appears side-by-side.
 - For the local model: a Hugging Face account that has accepted the FLUX.2 license
   (weights are gated). For remote: a FAL or Fireworks API key.
 
-## Quick Start
+## Run with Docker (recommended)
+
+The whole app — FastAPI + in-process FLUX.2 Klein + the UI + Blender USDZ conversion —
+runs as a single GPU container. (The TRELLIS image→3D sidecar is intentionally *not*
+containerized; in the container the "Create 3D from image" button returns a placeholder
+asset. To run TRELLIS too, see the manual setup + `trellis/`.)
+
+Needs Docker + the NVIDIA Container Toolkit and a ~40GB+ GPU.
+
+```bash
+cp .env.example .env          # set HF_TOKEN (its account must have accepted the FLUX.2-klein-9B license)
+docker compose up --build
+```
+
+First boot downloads ~34GB of weights into the `hf-cache` volume, then serves the UI at
+<http://localhost:3000/>. Restarts are fast — the weights persist in the volume.
+
+## Quick Start (manual / no Docker)
 
 ### 1. Install dependencies
 

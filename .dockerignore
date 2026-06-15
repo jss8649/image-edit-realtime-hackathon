@@ -1,0 +1,11 @@
+.git
+__pycache__/
+*.pyc
+.env
+*.png
+*.jpg
+trellis/
+tools/
+session-log.md
+node_modules/
+.DS_Store

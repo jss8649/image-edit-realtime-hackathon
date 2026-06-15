@@ -1,0 +1,31 @@
+# Realtime Canvas — containerized demo (single GPU service).
+#
+#   cp .env.example .env   # then set HF_TOKEN
+#   docker compose up --build
+#
+# First run downloads ~34GB of FLUX.2 Klein weights into the hf-cache volume
+# (needs an HF token whose account has accepted the FLUX.2-klein-9B license).
+services:
+  app:
+    build: .
+    image: realtime-canvas:latest
+    ports:
+      - "3000:3000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:?set HF_TOKEN in .env}
+      HF_HOME: /models/hf
+      # IMAGE_GEN_PROVIDER defaults to "klein" (local). TRELLIS is not included,
+      # so /generate-3d returns a stub asset (no TRELLIS_URL set).
+    volumes:
+      - hf-cache:/models/hf
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  hf-cache:
